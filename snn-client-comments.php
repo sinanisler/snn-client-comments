@@ -1132,12 +1132,15 @@ function snn_cc_enqueue_scripts() {
 
         // Load comments from server
         function loadComments() {
+            // Remove snn_guest_token from URL for consistent page identification
+            const cleanUrl = removeTokenFromUrl(window.location.href);
+
             $.ajax({
                 url: ajaxUrl,
                 type: 'POST',
                 data: {
                     action: 'snn_cc_get_comments',
-                    page_url: window.location.href,
+                    page_url: cleanUrl,
                     nonce: nonce
                 },
                 success: function(response) {
@@ -1343,6 +1346,9 @@ function snn_cc_enqueue_scripts() {
             const originalText = btn.text();
             btn.html('<span class="snn-cc-loading"></span>').prop('disabled', true);
 
+            // Remove snn_guest_token from URL for consistent page identification
+            const cleanUrl = removeTokenFromUrl(window.location.href);
+
             $.ajax({
                 url: ajaxUrl,
                 type: 'POST',
@@ -1351,7 +1357,7 @@ function snn_cc_enqueue_scripts() {
                     comment: comment,
                     pos_x: x + 'px',
                     pos_y: y + 'px',
-                    page_url: window.location.href,
+                    page_url: cleanUrl,
                     parent_id: parentId,
                     nonce: nonce
                 },
@@ -1475,6 +1481,17 @@ function snn_cc_enqueue_scripts() {
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        function removeTokenFromUrl(url) {
+            try {
+                const urlObj = new URL(url);
+                urlObj.searchParams.delete('snn_guest_token');
+                return urlObj.toString();
+            } catch (e) {
+                // Fallback for invalid URLs
+                return url.replace(/[?&]snn_guest_token=[^&]+/, '').replace(/\?$/, '');
+            }
         }
     });
     </script>
