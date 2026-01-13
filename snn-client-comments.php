@@ -450,7 +450,7 @@ function snn_cc_enqueue_scripts() {
     $admin_bar_height = is_admin_bar_showing() ? 32 : 0;
 
     // Add inline styles and scripts
-    add_action('wp_footer', function() use ($marker_color, $marker_style, $allow_replies, $user_id, $user_name, $user_initials, $admin_bar_height, $guest_commenting) {
+    add_action('wp_footer', function() use ($marker_color, $marker_style, $allow_replies, $user_id, $user_name, $user_initials, $admin_bar_height, $guest_commenting, $is_guest) {
     ?>
     <style>
         /* Admin Bar Styles */
@@ -475,6 +475,47 @@ function snn_cc_enqueue_scripts() {
         #wpadminbar #wp-admin-bar-snn-cc-sidebar-btn.active {
             background: <?php echo esc_attr($marker_color); ?> !important;
         }
+
+        /* Fixed Guest Buttons (for users without admin bar) */
+        <?php if ($is_guest): ?>
+        .snn-cc-guest-controls {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            z-index: 999997;
+            display: flex;
+            gap: 10px;
+        }
+        .snn-cc-guest-btn {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: <?php echo esc_attr($marker_color); ?>;
+            color: #fff;
+            border: 3px solid #fff;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            transition: transform 0.2s, box-shadow 0.2s;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, sans-serif;
+        }
+        .snn-cc-guest-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+        }
+        .snn-cc-guest-btn.active {
+            background: #d63638;
+        }
+        .snn-cc-guest-btn .dashicons {
+            font-size: 24px;
+            width: 24px;
+            height: 24px;
+            line-height: 1;
+        }
+        <?php endif; ?>
 
         /* Share notification */
         .snn-cc-notification {
@@ -865,12 +906,16 @@ function snn_cc_enqueue_scripts() {
         const ajaxUrl = '<?php echo admin_url('admin-ajax.php'); ?>';
         const nonce = '<?php echo wp_create_nonce('snn_cc_nonce'); ?>';
         const guestCommenting = <?php echo $guest_commenting ? 'true' : 'false'; ?>;
+        const isGuest = <?php echo $is_guest ? 'true' : 'false'; ?>;
 
         // Initialize
         init();
 
         function init() {
             createSidebar();
+            <?php if ($is_guest): ?>
+            createGuestControls();
+            <?php endif; ?>
             loadComments();
             bindEvents();
         }
@@ -887,30 +932,43 @@ function snn_cc_enqueue_scripts() {
             $('body').append(sidebar);
         }
 
+        // Create guest control buttons
+        function createGuestControls() {
+            const controls = $('<div class="snn-cc-guest-controls">' +
+                '<button class="snn-cc-guest-btn snn-cc-guest-add-btn" title="Add Comment">' +
+                    '<span class="dashicons dashicons-location-alt"></span>' +
+                '</button>' +
+                '<button class="snn-cc-guest-btn snn-cc-guest-sidebar-btn" title="View Comments">' +
+                    '<span class="dashicons dashicons-list-view"></span>' +
+                '</button>' +
+            '</div>');
+            $('body').append(controls);
+        }
+
         // Bind events
         function bindEvents() {
-            // Toggle add comment mode
-            $('#wp-admin-bar-snn-cc-add-btn').on('click', function(e) {
+            // Toggle add comment mode (Admin bar and Guest buttons)
+            $('#wp-admin-bar-snn-cc-add-btn, .snn-cc-guest-add-btn').on('click', function(e) {
                 e.preventDefault();
                 clickMode = !clickMode;
-                $(this).toggleClass('active', clickMode);
+                $('#wp-admin-bar-snn-cc-add-btn, .snn-cc-guest-add-btn').toggleClass('active', clickMode);
                 $('body').toggleClass('snn-cc-click-mode', clickMode);
             });
 
-            // Toggle sidebar
-            $('#wp-admin-bar-snn-cc-sidebar-btn, .snn-cc-sidebar-close').on('click', function(e) {
+            // Toggle sidebar (Admin bar and Guest buttons)
+            $('#wp-admin-bar-snn-cc-sidebar-btn, .snn-cc-guest-sidebar-btn, .snn-cc-sidebar-close').on('click', function(e) {
                 e.preventDefault();
                 sidebarOpen = !sidebarOpen;
                 $('.snn-cc-sidebar').toggleClass('active', sidebarOpen);
-                $('#wp-admin-bar-snn-cc-sidebar-btn').toggleClass('active', sidebarOpen);
+                $('#wp-admin-bar-snn-cc-sidebar-btn, .snn-cc-guest-sidebar-btn').toggleClass('active', sidebarOpen);
             });
 
             // Handle click to add comment
             $('body').on('click', function(e) {
                 if (!clickMode) return;
 
-                // Ignore clicks on admin bar, markers, popups, and sidebar
-                if ($(e.target).closest('#wpadminbar, .snn-cc-marker, .snn-cc-popup, .snn-cc-sidebar').length) {
+                // Ignore clicks on admin bar, guest buttons, markers, popups, and sidebar
+                if ($(e.target).closest('#wpadminbar, .snn-cc-guest-controls, .snn-cc-marker, .snn-cc-popup, .snn-cc-sidebar').length) {
                     return;
                 }
 
@@ -918,7 +976,7 @@ function snn_cc_enqueue_scripts() {
                 e.stopPropagation();
 
                 clickMode = false;
-                $('#wp-admin-bar-snn-cc-add-btn').removeClass('active');
+                $('#wp-admin-bar-snn-cc-add-btn, .snn-cc-guest-add-btn').removeClass('active');
                 $('body').removeClass('snn-cc-click-mode');
 
                 const x = e.pageX;
