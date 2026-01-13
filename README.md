@@ -9,6 +9,11 @@
 
 Visual commenting system for WordPress - Add comments directly on any page location with multi-user collaboration support.
 
+<img width="1880" height="1006" alt="image" src="https://github.com/user-attachments/assets/bc5db35e-1bd6-4634-a9a1-22a9f043026a" />
+
+<img width="1609" height="980" alt="image" src="https://github.com/user-attachments/assets/18799888-a1ea-435a-8e7e-4b09483c127e" />
+
+
 ## Features
 
 ### Core Commenting
