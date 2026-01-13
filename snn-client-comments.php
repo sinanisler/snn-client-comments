@@ -1784,7 +1784,7 @@ function snn_cc_get_comments() {
     $page_url = esc_url_raw($_POST['page_url']);
 
     $comments = $wpdb->get_results($wpdb->prepare(
-        "SELECT c.*,
+        "SELECT c.id, c.parent_id, c.user_id, c.guest_token, c.page_url, c.pos_x, c.pos_y, c.comment, c.status, c.created_at, c.updated_at,
          CASE
             WHEN c.user_id = -1 THEN 'Guest'
             ELSE u.display_name
