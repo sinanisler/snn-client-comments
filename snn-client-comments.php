@@ -39,6 +39,7 @@ function snn_cc_create_tables() {
         id bigint(20) NOT NULL AUTO_INCREMENT,
         parent_id bigint(20) DEFAULT 0,
         user_id bigint(20) NOT NULL,
+        guest_token varchar(64) DEFAULT NULL,
         page_url varchar(500) NOT NULL,
         pos_x varchar(20) NOT NULL,
         pos_y varchar(20) NOT NULL,
@@ -49,6 +50,7 @@ function snn_cc_create_tables() {
         PRIMARY KEY (id),
         KEY parent_id (parent_id),
         KEY user_id (user_id),
+        KEY guest_token (guest_token),
         KEY page_url (page_url(191)),
         KEY status (status)
     ) $charset_collate;";
@@ -911,6 +913,7 @@ function snn_cc_enqueue_scripts() {
         const nonce = '<?php echo wp_create_nonce('snn_cc_nonce'); ?>';
         const guestCommenting = <?php echo $guest_commenting ? 'true' : 'false'; ?>;
         const isGuest = <?php echo $is_guest ? 'true' : 'false'; ?>;
+        const currentGuestToken = isGuest ? '<?php echo isset($_SESSION['snn_guest_token']) ? esc_js($_SESSION['snn_guest_token']) : ''; ?>' : '';
 
         // Initialize
         init();
@@ -1248,7 +1251,10 @@ function snn_cc_enqueue_scripts() {
             $('.snn-cc-popup').remove();
 
             const replies = comments.filter(c => c.parent_id == comment.id);
-            const canEdit = comment.user_id == currentUserId;
+            // Check ownership: for guests, compare tokens; for logged in users, compare user IDs
+            const canEdit = isGuest
+                ? (comment.user_id == -1 && comment.guest_token == currentGuestToken)
+                : (comment.user_id == currentUserId);
 
             let popupHTML = '<div class="snn-cc-popup">' +
                 '<div class="snn-cc-popup-header">' +
@@ -1267,7 +1273,10 @@ function snn_cc_enqueue_scripts() {
             if (replies.length > 0) {
                 popupHTML += '<div class="snn-cc-popup-replies">';
                 replies.forEach(function(reply) {
-                    const canEditReply = reply.user_id == currentUserId;
+                    // Check ownership for each reply
+                    const canEditReply = isGuest
+                        ? (reply.user_id == -1 && reply.guest_token == currentGuestToken)
+                        : (reply.user_id == currentUserId);
                     popupHTML += renderComment(reply, canEditReply, true);
                 });
                 popupHTML += '</div>';
@@ -1572,8 +1581,14 @@ function snn_cc_save_comment() {
     $page_url = esc_url_raw($_POST['page_url']);
     $parent_id = isset($_POST['parent_id']) ? intval($_POST['parent_id']) : 0;
 
-    // Use -1 for guest users
-    $user_id = $is_guest ? -1 : get_current_user_id();
+    // Use -1 for guest users and store their token for ownership tracking
+    if ($is_guest) {
+        $user_id = -1;
+        $guest_token = isset($_SESSION['snn_guest_token']) ? $_SESSION['snn_guest_token'] : '';
+    } else {
+        $user_id = get_current_user_id();
+        $guest_token = null;
+    }
 
     if (empty($comment)) {
         wp_send_json_error('Comment is required');
@@ -1585,13 +1600,14 @@ function snn_cc_save_comment() {
         array(
             'parent_id' => $parent_id,
             'user_id' => $user_id,
+            'guest_token' => $guest_token,
             'page_url' => $page_url,
             'pos_x' => $pos_x,
             'pos_y' => $pos_y,
             'comment' => $comment,
             'status' => 'active'
         ),
-        array('%d', '%d', '%s', '%s', '%s', '%s', '%s')
+        array('%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s')
     );
 
     if ($result) {
@@ -1609,7 +1625,9 @@ add_action('wp_ajax_nopriv_snn_cc_save_comment', 'snn_cc_save_comment');
 function snn_cc_update_comment() {
     check_ajax_referer('snn_cc_nonce', 'nonce');
 
-    if (!is_user_logged_in()) {
+    // Allow guests if they have valid token
+    $is_guest = snn_cc_is_guest_user();
+    if (!is_user_logged_in() && !$is_guest) {
         wp_send_json_error('Not logged in');
         return;
     }
@@ -1619,19 +1637,28 @@ function snn_cc_update_comment() {
 
     $comment_id = intval($_POST['comment_id']);
     $comment = sanitize_textarea_field($_POST['comment']);
-    $user_id = get_current_user_id();
 
     if (empty($comment)) {
         wp_send_json_error('Comment is required');
         return;
     }
 
-    // Check ownership
-    $existing = $wpdb->get_row($wpdb->prepare(
-        "SELECT * FROM $table_name WHERE id = %d AND user_id = %d",
-        $comment_id,
-        $user_id
-    ));
+    // Check ownership - different logic for guests vs logged in users
+    if ($is_guest) {
+        $guest_token = isset($_SESSION['snn_guest_token']) ? $_SESSION['snn_guest_token'] : '';
+        $existing = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM $table_name WHERE id = %d AND user_id = -1 AND guest_token = %s",
+            $comment_id,
+            $guest_token
+        ));
+    } else {
+        $user_id = get_current_user_id();
+        $existing = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM $table_name WHERE id = %d AND user_id = %d",
+            $comment_id,
+            $user_id
+        ));
+    }
 
     if (!$existing) {
         wp_send_json_error('You can only edit your own comments');
@@ -1661,7 +1688,9 @@ add_action('wp_ajax_nopriv_snn_cc_update_comment', 'snn_cc_update_comment');
 function snn_cc_delete_comment() {
     check_ajax_referer('snn_cc_nonce', 'nonce');
 
-    if (!is_user_logged_in()) {
+    // Allow guests if they have valid token
+    $is_guest = snn_cc_is_guest_user();
+    if (!is_user_logged_in() && !$is_guest) {
         wp_send_json_error('Not logged in');
         return;
     }
@@ -1670,14 +1699,23 @@ function snn_cc_delete_comment() {
     $table_name = $wpdb->prefix . 'snn_client_comments';
 
     $comment_id = intval($_POST['comment_id']);
-    $user_id = get_current_user_id();
 
-    // Check ownership
-    $existing = $wpdb->get_row($wpdb->prepare(
-        "SELECT * FROM $table_name WHERE id = %d AND user_id = %d",
-        $comment_id,
-        $user_id
-    ));
+    // Check ownership - different logic for guests vs logged in users
+    if ($is_guest) {
+        $guest_token = isset($_SESSION['snn_guest_token']) ? $_SESSION['snn_guest_token'] : '';
+        $existing = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM $table_name WHERE id = %d AND user_id = -1 AND guest_token = %s",
+            $comment_id,
+            $guest_token
+        ));
+    } else {
+        $user_id = get_current_user_id();
+        $existing = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM $table_name WHERE id = %d AND user_id = %d",
+            $comment_id,
+            $user_id
+        ));
+    }
 
     if (!$existing) {
         wp_send_json_error('You can only delete your own comments');
