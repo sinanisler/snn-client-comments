@@ -241,8 +241,11 @@ function snn_cc_add_admin_bar_button($wp_admin_bar) {
     $show_in_frontend = get_option('snn_cc_show_in_frontend', '1');
     $show_in_admin = get_option('snn_cc_show_in_admin', '1');
 
-    if (is_admin() && !$show_in_admin) return;
-    if (!is_admin() && !$show_in_frontend) return;
+    // Don't show buttons on admin dashboard/pages (only frontend)
+    if (is_admin()) return;
+
+    // Only show on frontend if enabled
+    if (!$show_in_frontend) return;
 
     // Add comment button
     $wp_admin_bar->add_node(array(
@@ -273,9 +276,14 @@ function snn_cc_enqueue_scripts() {
     $show_in_frontend = get_option('snn_cc_show_in_frontend', '1');
     $show_in_admin = get_option('snn_cc_show_in_admin', '1');
 
-    if (is_admin() && !$show_in_admin) return;
-    if (!is_admin() && !$show_in_frontend) return;
+    // Don't show on admin dashboard/pages (only frontend)
+    if (is_admin()) return;
 
+    // Only show on frontend if enabled
+    if (!$show_in_frontend) return;
+
+    // Enqueue jQuery and dashicons
+    wp_enqueue_script('jquery');
     wp_enqueue_style('dashicons');
 
     $marker_color = get_option('snn_cc_marker_color', '#0073aa');
@@ -286,6 +294,9 @@ function snn_cc_enqueue_scripts() {
     $user_id = get_current_user_id();
     $user_name = $current_user->display_name;
     $user_initials = snn_cc_get_user_initials($user_name);
+
+    // Check if admin bar is showing
+    $admin_bar_height = is_admin_bar_showing() ? 32 : 0;
 
     ?>
     <style>
@@ -347,10 +358,10 @@ function snn_cc_enqueue_scripts() {
         /* Sidebar */
         .snn-cc-sidebar {
             position: fixed;
-            top: 32px;
+            top: <?php echo $admin_bar_height; ?>px;
             left: -320px;
             width: 300px;
-            height: calc(100vh - 32px);
+            height: calc(100vh - <?php echo $admin_bar_height; ?>px);
             background: #fff;
             box-shadow: 2px 0 10px rgba(0,0,0,0.1);
             z-index: 999998;
@@ -1226,8 +1237,8 @@ function snn_cc_enqueue_scripts() {
     </script>
     <?php
 }
+// Only load on frontend, not in admin
 add_action('wp_footer', 'snn_cc_enqueue_scripts');
-add_action('admin_footer', 'snn_cc_enqueue_scripts');
 
 /**
  * Get user initials
