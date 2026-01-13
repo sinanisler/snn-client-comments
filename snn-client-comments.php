@@ -531,7 +531,7 @@ function snn_cc_add_admin_bar_button($wp_admin_bar) {
     // Add parent menu
     $wp_admin_bar->add_node(array(
         'id'    => 'snn-cc-menu',
-        'title' => '<span class="ab-icon dashicons dashicons-admin-comments"></span><span class="ab-label">Comments</span>',
+        'title' => '<span class="ab-icon dashicons dashicons-admin-comments"></span><span class="ab-label">CC</span>',
         'href'  => '#',
         'meta'  => array('class' => 'snn-cc-menu-parent')
     ));
