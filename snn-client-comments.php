@@ -20,6 +20,7 @@ if (!defined('ABSPATH')) {
 
 // Define plugin constants
 define('SNN_CC_VERSION', '1.0.0');
+define('SNN_CC_DB_VERSION', '1.1'); // Database schema version
 define('SNN_CC_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('SNN_CC_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -85,8 +86,54 @@ function snn_cc_create_tables() {
     add_option('snn_cc_marker_style', 'initials');
     add_option('snn_cc_auto_collapse', '0');
     add_option('snn_cc_guest_commenting', '0');
+    
+    // Save database version
+    update_option('snn_cc_db_version', SNN_CC_DB_VERSION);
 }
 register_activation_hook(__FILE__, 'snn_cc_create_tables');
+
+/**
+ * Check and upgrade database schema if needed
+ */
+function snn_cc_check_db_upgrade() {
+    $current_db_version = get_option('snn_cc_db_version', '0');
+    
+    // If DB version doesn't match, run upgrade
+    if (version_compare($current_db_version, SNN_CC_DB_VERSION, '<')) {
+        snn_cc_upgrade_database($current_db_version);
+    }
+}
+add_action('plugins_loaded', 'snn_cc_check_db_upgrade');
+
+/**
+ * Upgrade database schema
+ */
+function snn_cc_upgrade_database($from_version) {
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'snn_client_comments';
+    
+    // Check if guest_token column exists
+    $column_exists = $wpdb->get_results($wpdb->prepare(
+        "SELECT * FROM INFORMATION_SCHEMA.COLUMNS 
+         WHERE TABLE_SCHEMA = %s 
+         AND TABLE_NAME = %s 
+         AND COLUMN_NAME = 'guest_token'",
+        DB_NAME,
+        $table_name
+    ));
+    
+    // Add guest_token column if it doesn't exist
+    if (empty($column_exists)) {
+        $wpdb->query("ALTER TABLE $table_name ADD COLUMN guest_token varchar(64) DEFAULT NULL AFTER user_id");
+        $wpdb->query("ALTER TABLE $table_name ADD KEY guest_token (guest_token)");
+    }
+    
+    // Re-run table creation to ensure all tables exist with latest schema
+    snn_cc_create_tables();
+    
+    // Update DB version
+    update_option('snn_cc_db_version', SNN_CC_DB_VERSION);
+}
 
 /**
  * Add settings page under Settings menu
