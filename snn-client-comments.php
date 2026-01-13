@@ -1355,6 +1355,7 @@ function snn_cc_enqueue_scripts() {
                 success: function(response) {
                     if (response.success) {
                         comments = response.data;
+                        console.log('SNN Comments: Loaded ' + comments.length + ' total comments from all users for collaboration');
                         displayMarkers();
                         updateSidebar();
                     }
@@ -1366,10 +1367,12 @@ function snn_cc_enqueue_scripts() {
         }
 
         // Display markers on page
+        // IMPORTANT: This displays ALL comments from ALL users/guests for collaboration
+        // No filtering by user - everyone sees everyone's comments
         function displayMarkers() {
             $('.snn-cc-marker').remove();
 
-            // Only show parent comments as markers
+            // Only show parent comments as markers (replies are shown inside the popup)
             const parentComments = comments.filter(c => c.parent_id == 0);
 
             parentComments.forEach(function(comment, index) {
@@ -1397,6 +1400,8 @@ function snn_cc_enqueue_scripts() {
         }
 
         // Update sidebar
+        // IMPORTANT: Sidebar shows ALL comments from ALL users/guests for collaboration
+        // Everyone can see and interact with comments from everyone else
         function updateSidebar() {
             const list = $('.snn-cc-sidebar-list');
             list.empty();
@@ -1456,11 +1461,14 @@ function snn_cc_enqueue_scripts() {
         }
 
         // Show comment popup
+        // IMPORTANT: ANY user can open and READ any comment (full collaboration)
+        // Only the comment OWNER can edit/delete (ownership is checked below)
         function showCommentPopup(comment, x, y) {
             $('.snn-cc-popup').remove();
 
             const replies = comments.filter(c => c.parent_id == comment.id);
             // Check ownership: for guests, compare tokens; for logged in users, compare user IDs
+            // This only controls edit/delete permissions, NOT visibility
             const canEdit = isGuest
                 ? (comment.user_id == -1 && comment.guest_token == currentGuestToken)
                 : (comment.user_id == currentUserId);
@@ -1783,6 +1791,9 @@ function snn_cc_get_comments() {
     $table_name = $wpdb->prefix . 'snn_client_comments';
     $page_url = esc_url_raw($_POST['page_url']);
 
+    // IMPORTANT: Retrieve ALL comments for this page regardless of who created them
+    // This enables collaboration - everyone can see comments from all users and guests
+    // NO user_id or guest_token filtering here - we want full visibility for collaboration
     $comments = $wpdb->get_results($wpdb->prepare(
         "SELECT c.id, c.parent_id, c.user_id, c.guest_token, c.page_url, c.pos_x, c.pos_y, c.comment, c.status, c.created_at, c.updated_at,
          CASE
