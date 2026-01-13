@@ -3,7 +3,7 @@
  * Plugin Name: SNN Client Comments 
  * Plugin URI: https://github.com/sinanisler/snn-client-comments
  * Description: Visual commenting system for WordPress - Add comments directly on any page location with multi-user collaboration support
- * Version: 0.2
+ * Version: 0.3
  * Author: sinanisler
  * Author URI: https://github.com/sinanisler
  * License: GPL v2 or later
