@@ -3,8 +3,8 @@
  * Plugin Name: SNN Client Comments
  * Plugin URI: https://github.com/sinanisler/snn-client-comments
  * Description: Visual commenting system for WordPress - Add comments directly on any page location with multi-user collaboration support
- * Version: 1.0.0
- * Author: Sinan Isler
+ * Version: 0.1
+ * Author: sinanisler
  * Author URI: https://github.com/sinanisler
  * License: GPL v2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -282,9 +282,9 @@ function snn_cc_enqueue_scripts() {
     // Only show on frontend if enabled
     if (!$show_in_frontend) return;
 
-    // Enqueue jQuery and dashicons
-    wp_enqueue_script('jquery');
+    // Enqueue dependencies
     wp_enqueue_style('dashicons');
+    wp_enqueue_script('jquery');
 
     $marker_color = get_option('snn_cc_marker_color', '#0073aa');
     $marker_style = get_option('snn_cc_marker_style', 'initials');
@@ -298,6 +298,8 @@ function snn_cc_enqueue_scripts() {
     // Check if admin bar is showing
     $admin_bar_height = is_admin_bar_showing() ? 32 : 0;
 
+    // Add inline styles and scripts
+    add_action('wp_footer', function() use ($marker_color, $marker_style, $allow_replies, $user_id, $user_name, $user_initials, $admin_bar_height) {
     ?>
     <style>
         /* Admin Bar Styles */
@@ -1236,9 +1238,10 @@ function snn_cc_enqueue_scripts() {
     });
     </script>
     <?php
+    }); // Close wp_footer anonymous function
 }
-// Only load on frontend, not in admin
-add_action('wp_footer', 'snn_cc_enqueue_scripts');
+// Enqueue scripts on wp_enqueue_scripts hook to ensure jQuery loads properly
+add_action('wp_enqueue_scripts', 'snn_cc_enqueue_scripts', 999);
 
 /**
  * Get user initials
