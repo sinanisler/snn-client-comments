@@ -1,0 +1,108 @@
+name: Plugin Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: '0'
+
+      - name: Get current version
+        id: get_version
+        run: |
+          version=$(grep -oP 'Version:\s*\K[0-9.]+' snn-client-comments.php)
+          echo "Current version: $version"
+          echo "version=$version" >> $GITHUB_ENV
+
+      - name: Bump version if release
+        if: contains(github.event.head_commit.message, 'release')
+        run: |
+          current_version=$(grep -oP 'Version:\s*\K[0-9.]+' snn-client-comments.php)
+          next_version=$(awk -F. '{print $1 "." ($2+1)}' <<< "$current_version")
+          sed -i "s/Version: $current_version/Version: $next_version/" snn-client-comments.php
+          echo "new_version=$next_version" >> $GITHUB_ENV
+
+      - name: Commit version bump
+        if: contains(github.event.head_commit.message, 'release')
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add snn-client-comments.php
+          git commit -m "Bump version to ${{ env.new_version }}"
+          git push
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get the latest tag (previous version)
+          latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+          # Generate changelog
+          if [ -z "$latest_tag" ]; then
+            # If no previous tag exists, get all commits
+            changelog=$(git log --pretty=format:"- %s (%h)" --no-merges)
+          else
+            # Get commits since the last tag
+            changelog=$(git log ${latest_tag}..HEAD --pretty=format:"- %s (%h)" --no-merges)
+          fi
+
+          # Save changelog to file and environment
+          echo "$changelog" > CHANGELOG.txt
+          echo "CHANGELOG<<EOF" >> $GITHUB_ENV
+          echo "$changelog" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+          echo "previous_tag=$latest_tag" >> $GITHUB_ENV
+
+      - name: Create zip file
+        run: |
+          mkdir -p snn-client-comments
+          rsync -av --exclude='.git' --exclude='.github' --exclude='snn-client-comments' ./ snn-client-comments/
+          zip -r snn-client-comments.zip snn-client-comments
+          rm -rf snn-client-comments
+
+      - name: Create GitHub Release
+        if: contains(github.event.head_commit.message, 'release')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: snn-client-comments.zip
+          tag_name: "v${{ env.new_version }}"
+          name: "Release v${{ env.new_version }}"
+          body: |
+            ## Release v${{ env.new_version }}
+
+            ### Changes in this release:
+            ${{ env.CHANGELOG }}
+
+            ---
+            **Full Changelog**: ${{ env.previous_tag != '' && format('https://github.com/sinanisler/snn-client-comments/compare/{0}...v{1}', env.previous_tag, env.new_version) || format('https://github.com/sinanisler/snn-client-comments/commits/v{0}', env.new_version) }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create GitHub Pre-release
+        if: contains(github.event.head_commit.message, 'alphatag')
+        uses: softprops/action-gh-release@v1
+        with:
+          prerelease: true
+          files: snn-client-comments.zip
+          tag_name: "pre-v${{ env.version }}"
+          name: "Pre-release v${{ env.version }}"
+          body: |
+            ## Pre-release v${{ env.version }}
+
+            ### Changes in this pre-release:
+            ${{ env.CHANGELOG }}
+
+            ---
+            **Note**: This is a pre-release version for testing purposes.
+            **Full Changelog**: ${{ env.previous_tag != '' && format('https://github.com/sinanisler/snn-client-comments/compare/{0}...pre-v{1}', env.previous_tag, env.version) || format('https://github.com/sinanisler/snn-client-comments/commits/pre-v{0}', env.version) }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

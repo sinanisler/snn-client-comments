@@ -23,6 +23,9 @@ define('SNN_CC_VERSION', '1.0.0');
 define('SNN_CC_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('SNN_CC_PLUGIN_URL', plugin_dir_url(__FILE__));
 
+// Include GitHub Auto-Update functionality
+require_once SNN_CC_PLUGIN_DIR . 'github-update.php';
+
 /**
  * Create database tables on activation
  */
