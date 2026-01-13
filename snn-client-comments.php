@@ -122,6 +122,12 @@ function snn_cc_settings_page() {
         return;
     }
 
+    // Handle regenerate token
+    if (isset($_POST['snn_cc_regenerate_token']) && check_admin_referer('snn_cc_settings_nonce')) {
+        snn_cc_regenerate_guest_token();
+        echo '<div class="notice notice-success"><p>Guest share link has been regenerated!</p></div>';
+    }
+
     // Save settings
     if (isset($_POST['snn_cc_save_settings']) && check_admin_referer('snn_cc_settings_nonce')) {
         update_option('snn_cc_enabled', isset($_POST['snn_cc_enabled']) ? '1' : '0');
@@ -243,6 +249,63 @@ function snn_cc_settings_page() {
 
         <hr>
 
+        <?php if ($guest_commenting === '1'): ?>
+        <h2>Guest Commenting Share Link</h2>
+        <p>Share this link with your clients to allow them to comment anywhere on your site without logging in.</p>
+
+        <?php
+        $token = snn_cc_get_global_guest_token();
+        $share_url = add_query_arg('snn_guest_token', $token, home_url());
+        ?>
+
+        <table class="form-table">
+            <tr>
+                <th scope="row">Share Link</th>
+                <td>
+                    <input type="text" id="snn-cc-share-url" value="<?php echo esc_attr($share_url); ?>" readonly style="width: 100%; max-width: 600px; font-family: monospace; background: #f5f5f5; padding: 8px;">
+                    <button type="button" id="snn-cc-copy-link" class="button" style="margin-left: 10px;">Copy Link</button>
+                    <p class="description">Clients can use this link to comment on any page of your site.</p>
+                </td>
+            </tr>
+        </table>
+
+        <form method="post" action="" style="margin-top: 10px;">
+            <?php wp_nonce_field('snn_cc_settings_nonce'); ?>
+            <p>
+                <input type="submit" name="snn_cc_regenerate_token" class="button" value="Regenerate Share Link"
+                    onclick="return confirm('This will invalidate the old link. Are you sure?');">
+                <span class="description" style="margin-left: 10px;">Generate a new link (old link will stop working)</span>
+            </p>
+        </form>
+
+        <script>
+        jQuery(document).ready(function($) {
+            $('#snn-cc-copy-link').on('click', function() {
+                var input = document.getElementById('snn-cc-share-url');
+                input.select();
+                input.setSelectionRange(0, 99999);
+
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(input.value).then(function() {
+                        $('#snn-cc-copy-link').text('Copied!');
+                        setTimeout(function() {
+                            $('#snn-cc-copy-link').text('Copy Link');
+                        }, 2000);
+                    });
+                } else {
+                    document.execCommand('copy');
+                    $('#snn-cc-copy-link').text('Copied!');
+                    setTimeout(function() {
+                        $('#snn-cc-copy-link').text('Copy Link');
+                    }, 2000);
+                }
+            });
+        });
+        </script>
+
+        <hr>
+        <?php endif; ?>
+
     </div>
     <?php
 }
@@ -290,73 +353,43 @@ function snn_cc_add_admin_bar_button($wp_admin_bar) {
         'href'  => '#',
         'meta'  => array('class' => 'snn-cc-toggle-sidebar')
     ));
-
-    // Add Copy Share button if guest commenting is enabled
-    if ($guest_commenting === '1') {
-        $wp_admin_bar->add_node(array(
-            'id'    => 'snn-cc-share-btn',
-            'parent' => 'snn-cc-menu',
-            'title' => '<span class="dashicons dashicons-share"></span> Copy Share Link',
-            'href'  => '#',
-            'meta'  => array('class' => 'snn-cc-copy-share')
-        ));
-    }
 }
 add_action('admin_bar_menu', 'snn_cc_add_admin_bar_button', 999);
 
 /**
- * Generate guest access token
+ * Get or generate global guest access token
  */
-function snn_cc_generate_guest_token($page_url) {
-    global $wpdb;
-    $tokens_table = $wpdb->prefix . 'snn_client_comments_tokens';
+function snn_cc_get_global_guest_token() {
+    $token = get_option('snn_cc_global_guest_token');
 
-    // Generate secure random token
+    // Generate new token if it doesn't exist
+    if (empty($token)) {
+        $token = bin2hex(random_bytes(32));
+        update_option('snn_cc_global_guest_token', $token);
+    }
+
+    return $token;
+}
+
+/**
+ * Regenerate global guest access token
+ */
+function snn_cc_regenerate_guest_token() {
     $token = bin2hex(random_bytes(32));
-    $user_id = get_current_user_id();
-
-    // Insert token into database
-    $wpdb->insert(
-        $tokens_table,
-        array(
-            'token' => $token,
-            'page_url' => $page_url,
-            'created_by' => $user_id,
-            'is_active' => 1
-        ),
-        array('%s', '%s', '%d', '%d')
-    );
-
+    update_option('snn_cc_global_guest_token', $token);
     return $token;
 }
 
 /**
  * Validate guest token
  */
-function snn_cc_validate_guest_token($token, $page_url) {
-    global $wpdb;
-    $tokens_table = $wpdb->prefix . 'snn_client_comments_tokens';
-
-    $token_data = $wpdb->get_row($wpdb->prepare(
-        "SELECT * FROM $tokens_table WHERE token = %s AND page_url = %s AND is_active = 1",
-        $token,
-        $page_url
-    ));
-
-    if ($token_data) {
-        // Update last used timestamp
-        $wpdb->update(
-            $tokens_table,
-            array('last_used' => current_time('mysql')),
-            array('id' => $token_data->id),
-            array('%s'),
-            array('%d')
-        );
-
-        return true;
+function snn_cc_validate_guest_token($token) {
+    if (!get_option('snn_cc_guest_commenting', '0')) {
+        return false;
     }
 
-    return false;
+    $global_token = snn_cc_get_global_guest_token();
+    return ($token === $global_token);
 }
 
 /**
@@ -374,23 +407,18 @@ function snn_cc_is_guest_user() {
     // Check if guest token is in session or URL
     if (isset($_GET['snn_guest_token'])) {
         $token = sanitize_text_field($_GET['snn_guest_token']);
-        $page_url = home_url($_SERVER['REQUEST_URI']);
-        $page_url = strtok($page_url, '?'); // Remove query string for validation
 
-        if (snn_cc_validate_guest_token($token, $page_url)) {
+        if (snn_cc_validate_guest_token($token)) {
             // Store token in session
             if (!session_id()) {
                 session_start();
             }
             $_SESSION['snn_guest_token'] = $token;
-            $_SESSION['snn_guest_page'] = $page_url;
             return true;
         }
-    } elseif (isset($_SESSION['snn_guest_token']) && isset($_SESSION['snn_guest_page'])) {
+    } elseif (isset($_SESSION['snn_guest_token'])) {
         $token = $_SESSION['snn_guest_token'];
-        $page_url = $_SESSION['snn_guest_page'];
-
-        return snn_cc_validate_guest_token($token, $page_url);
+        return snn_cc_validate_guest_token($token);
     }
 
     return false;
@@ -458,14 +486,8 @@ function snn_cc_enqueue_scripts() {
             content: "\f101";
             top: 2px;
         }
-        #wpadminbar #wp-admin-bar-snn-cc-add-btn .dashicons {
-            font-size: 16px;
-            line-height: 1;
-            vertical-align: middle;
-            margin-right: 4px;
-        }
-        #wpadminbar #wp-admin-bar-snn-cc-sidebar-btn .dashicons,
-        #wpadminbar #wp-admin-bar-snn-cc-share-btn .dashicons {
+        #wpadminbar #wp-admin-bar-snn-cc-add-btn .dashicons,
+        #wpadminbar #wp-admin-bar-snn-cc-sidebar-btn .dashicons {
             font-size: 16px;
             line-height: 1;
             vertical-align: middle;
@@ -516,24 +538,6 @@ function snn_cc_enqueue_scripts() {
             line-height: 1;
         }
         <?php endif; ?>
-
-        /* Share notification */
-        .snn-cc-notification {
-            position: fixed;
-            top: <?php echo $admin_bar_height + 10; ?>px;
-            right: 20px;
-            background: #4caf50;
-            color: #fff;
-            padding: 12px 20px;
-            border-radius: 4px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-            z-index: 9999999;
-            animation: slideIn 0.3s ease;
-        }
-        @keyframes slideIn {
-            from { transform: translateX(400px); opacity: 0; }
-            to { transform: translateX(0); opacity: 1; }
-        }
 
         /* Click Mode Cursor */
         body.snn-cc-click-mode * {
@@ -1124,13 +1128,6 @@ function snn_cc_enqueue_scripts() {
             $('body').on('click', '.snn-cc-popup-btn-cancel-reply', function() {
                 $(this).closest('.snn-cc-reply-form').remove();
             });
-
-            // Copy Share Link
-            $('#wp-admin-bar-snn-cc-share-btn a').on('click', function(e) {
-                e.preventDefault();
-                e.stopPropagation();
-                generateShareLink();
-            });
         }
 
         // Load comments from server
@@ -1429,59 +1426,6 @@ function snn_cc_enqueue_scripts() {
             });
         }
 
-        // Generate and copy share link
-        function generateShareLink() {
-            $.ajax({
-                url: ajaxUrl,
-                type: 'POST',
-                data: {
-                    action: 'snn_cc_generate_share_link',
-                    page_url: window.location.href,
-                    nonce: nonce
-                },
-                success: function(response) {
-                    if (response.success && response.data.url) {
-                        copyToClipboard(response.data.url);
-                        showNotification('Share link copied to clipboard!');
-                    } else {
-                        alert('Error generating share link: ' + (response.data || 'Unknown error'));
-                    }
-                },
-                error: function() {
-                    alert('Error generating share link');
-                }
-            });
-        }
-
-        // Copy to clipboard
-        function copyToClipboard(text) {
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(text);
-            } else {
-                // Fallback for older browsers
-                const textarea = document.createElement('textarea');
-                textarea.value = text;
-                textarea.style.position = 'fixed';
-                textarea.style.opacity = '0';
-                document.body.appendChild(textarea);
-                textarea.select();
-                document.execCommand('copy');
-                document.body.removeChild(textarea);
-            }
-        }
-
-        // Show notification
-        function showNotification(message) {
-            const notification = $('<div class="snn-cc-notification">' + message + '</div>');
-            $('body').append(notification);
-
-            setTimeout(function() {
-                notification.fadeOut(300, function() {
-                    $(this).remove();
-                });
-            }, 3000);
-        }
-
         // Helper functions
         function findCommentById(id) {
             return comments.find(c => c.id == id);
@@ -1553,35 +1497,6 @@ function snn_cc_get_user_initials($name) {
 
     return strtoupper($parts[0][0] . $parts[count($parts) - 1][0]);
 }
-
-/**
- * AJAX: Generate share link
- */
-function snn_cc_generate_share_link() {
-    check_ajax_referer('snn_cc_nonce', 'nonce');
-
-    if (!is_user_logged_in()) {
-        wp_send_json_error('Not logged in');
-        return;
-    }
-
-    if (!get_option('snn_cc_guest_commenting', '0')) {
-        wp_send_json_error('Guest commenting is not enabled');
-        return;
-    }
-
-    $page_url = esc_url_raw($_POST['page_url']);
-    $page_url = strtok($page_url, '?'); // Remove existing query params
-
-    // Generate token
-    $token = snn_cc_generate_guest_token($page_url);
-
-    // Build share URL
-    $share_url = add_query_arg('snn_guest_token', $token, $page_url);
-
-    wp_send_json_success(array('url' => $share_url));
-}
-add_action('wp_ajax_snn_cc_generate_share_link', 'snn_cc_generate_share_link');
 
 /**
  * AJAX: Get comments for current page
