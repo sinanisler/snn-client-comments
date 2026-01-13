@@ -41,6 +41,7 @@ function snn_cc_create_tables() {
         parent_id bigint(20) DEFAULT 0,
         user_id bigint(20) NOT NULL,
         guest_token varchar(64) DEFAULT NULL,
+        post_id bigint(20) DEFAULT 0,
         page_url varchar(500) NOT NULL,
         pos_x varchar(20) NOT NULL,
         pos_y varchar(20) NOT NULL,
@@ -52,6 +53,7 @@ function snn_cc_create_tables() {
         KEY parent_id (parent_id),
         KEY user_id (user_id),
         KEY guest_token (guest_token),
+        KEY post_id (post_id),
         KEY page_url (page_url(191)),
         KEY status (status)
     ) $charset_collate;";
@@ -126,6 +128,22 @@ function snn_cc_upgrade_database($from_version) {
     if (empty($column_exists)) {
         $wpdb->query("ALTER TABLE $table_name ADD COLUMN guest_token varchar(64) DEFAULT NULL AFTER user_id");
         $wpdb->query("ALTER TABLE $table_name ADD KEY guest_token (guest_token)");
+    }
+    
+    // Check if post_id column exists
+    $post_id_exists = $wpdb->get_results($wpdb->prepare(
+        "SELECT * FROM INFORMATION_SCHEMA.COLUMNS 
+         WHERE TABLE_SCHEMA = %s 
+         AND TABLE_NAME = %s 
+         AND COLUMN_NAME = 'post_id'",
+        DB_NAME,
+        $table_name
+    ));
+    
+    // Add post_id column if it doesn't exist
+    if (empty($post_id_exists)) {
+        $wpdb->query("ALTER TABLE $table_name ADD COLUMN post_id bigint(20) DEFAULT 0 AFTER guest_token");
+        $wpdb->query("ALTER TABLE $table_name ADD KEY post_id (post_id)");
     }
     
     // Re-run table creation to ensure all tables exist with latest schema
@@ -1112,6 +1130,7 @@ function snn_cc_enqueue_scripts() {
         const guestCommenting = <?php echo $guest_commenting ? 'true' : 'false'; ?>;
         const isGuest = <?php echo $is_guest ? 'true' : 'false'; ?>;
         const currentGuestToken = isGuest ? '<?php echo isset($_SESSION['snn_guest_token']) ? esc_js($_SESSION['snn_guest_token']) : ''; ?>' : '';
+        const currentPostId = <?php echo get_queried_object_id(); ?>;
 
         // Initialize
         init();
@@ -1336,9 +1355,15 @@ function snn_cc_enqueue_scripts() {
             // Remove snn_guest_token from URL for consistent page identification
             const cleanUrl = removeTokenFromUrl(window.location.href);
 
+            console.log('SNN Comments: Loading comments for URL:', cleanUrl);
+            console.log('SNN Comments: Loading comments for post_id:', currentPostId);
+            console.log('SNN Comments: Current user type:', isGuest ? 'Guest' : 'Logged In');
+            console.log('SNN Comments: User ID:', currentUserId);
+
             // Prepare data
             const requestData = {
                 action: 'snn_cc_get_comments',
+                post_id: currentPostId,
                 page_url: cleanUrl,
                 nonce: nonce
             };
@@ -1346,6 +1371,7 @@ function snn_cc_enqueue_scripts() {
             // Include guest token if user is guest
             if (isGuest && currentGuestToken) {
                 requestData.guest_token = currentGuestToken;
+                console.log('SNN Comments: Including guest token in request');
             }
 
             $.ajax({
@@ -1353,15 +1379,27 @@ function snn_cc_enqueue_scripts() {
                 type: 'POST',
                 data: requestData,
                 success: function(response) {
+                    console.log('SNN Comments: AJAX Response:', response);
                     if (response.success) {
                         comments = response.data;
                         console.log('SNN Comments: Loaded ' + comments.length + ' total comments from all users for collaboration');
+                        console.log('SNN Comments: Comment details:', comments.map(c => ({
+                            id: c.id,
+                            user_id: c.user_id,
+                            user_name: c.user_name,
+                            text: c.comment.substring(0, 30)
+                        })));
                         displayMarkers();
                         updateSidebar();
+                    } else {
+                        console.error('SNN Comments: Server returned error:', response.data);
+                        alert('Error loading comments: ' + response.data);
                     }
                 },
                 error: function(xhr, status, error) {
-                    console.error('Load comments error:', status, error);
+                    console.error('SNN Comments: AJAX error:', status, error);
+                    console.error('SNN Comments: Response text:', xhr.responseText);
+                    alert('Failed to load comments. Check console for details.');
                 }
             });
         }
@@ -1581,6 +1619,7 @@ function snn_cc_enqueue_scripts() {
                 comment: comment,
                 pos_x: x + 'px',
                 pos_y: y + 'px',
+                post_id: currentPostId,
                 page_url: cleanUrl,
                 parent_id: parentId,
                 nonce: nonce
@@ -1741,10 +1780,16 @@ function snn_cc_enqueue_scripts() {
             try {
                 const urlObj = new URL(url);
                 urlObj.searchParams.delete('snn_guest_token');
-                return urlObj.toString();
+                const cleaned = urlObj.toString();
+                if (url !== cleaned) {
+                    console.log('SNN Comments: URL cleaned from:', url, 'to:', cleaned);
+                }
+                return cleaned;
             } catch (e) {
                 // Fallback for invalid URLs
-                return url.replace(/[?&]snn_guest_token=[^&]+/, '').replace(/\?$/, '');
+                console.warn('SNN Comments: URL parsing failed, using regex fallback');
+                const cleaned = url.replace(/[?&]snn_guest_token=[^&]+/, '').replace(/\?$/, '');
+                return cleaned;
             }
         }
     });
@@ -1778,11 +1823,22 @@ function snn_cc_get_comments() {
         @session_start();
     }
 
-    check_ajax_referer('snn_cc_nonce', 'nonce');
+    // Log request details for debugging
+    error_log('SNN CC Get Comments: User logged in: ' . (is_user_logged_in() ? 'yes' : 'no'));
+    error_log('SNN CC Get Comments: Is guest: ' . (snn_cc_is_guest_user() ? 'yes' : 'no'));
+    error_log('SNN CC Get Comments: Page URL: ' . (isset($_POST['page_url']) ? $_POST['page_url'] : 'not set'));
+
+    // More lenient nonce check - allow both logged in and guest requests
+    if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'snn_cc_nonce')) {
+        error_log('SNN CC Get Comments: Nonce verification failed');
+        wp_send_json_error('Invalid security token');
+        return;
+    }
 
     // Allow guests if they have valid token
     $is_guest = snn_cc_is_guest_user();
     if (!is_user_logged_in() && !$is_guest) {
+        error_log('SNN CC Get Comments: Access denied - not logged in and not valid guest');
         wp_send_json_error('Not logged in');
         return;
     }
@@ -1790,22 +1846,44 @@ function snn_cc_get_comments() {
     global $wpdb;
     $table_name = $wpdb->prefix . 'snn_client_comments';
     $page_url = esc_url_raw($_POST['page_url']);
+    $post_id = isset($_POST['post_id']) ? intval($_POST['post_id']) : 0;
 
     // IMPORTANT: Retrieve ALL comments for this page regardless of who created them
     // This enables collaboration - everyone can see comments from all users and guests
     // NO user_id or guest_token filtering here - we want full visibility for collaboration
-    $comments = $wpdb->get_results($wpdb->prepare(
-        "SELECT c.id, c.parent_id, c.user_id, c.guest_token, c.page_url, c.pos_x, c.pos_y, c.comment, c.status, c.created_at, c.updated_at,
-         CASE
-            WHEN c.user_id = -1 THEN 'Guest'
-            ELSE u.display_name
-         END as user_name
-         FROM $table_name c
-         LEFT JOIN {$wpdb->users} u ON c.user_id = u.ID
-         WHERE c.page_url = %s AND c.status = 'active'
-         ORDER BY c.parent_id ASC, c.created_at ASC",
-        $page_url
-    ), ARRAY_A);
+    // Use post_id as primary identifier (more reliable), with page_url as fallback
+    if ($post_id > 0) {
+        $comments = $wpdb->get_results($wpdb->prepare(
+            "SELECT c.id, c.parent_id, c.user_id, c.guest_token, c.post_id, c.page_url, c.pos_x, c.pos_y, c.comment, c.status, c.created_at, c.updated_at,
+             CASE
+                WHEN c.user_id = -1 THEN 'Guest'
+                ELSE u.display_name
+             END as user_name
+             FROM $table_name c
+             LEFT JOIN {$wpdb->users} u ON c.user_id = u.ID
+             WHERE c.post_id = %d AND c.status = 'active'
+             ORDER BY c.parent_id ASC, c.created_at ASC",
+            $post_id
+        ), ARRAY_A);
+        error_log('SNN CC Get Comments: Retrieved ' . count($comments) . ' comments for post_id: ' . $post_id);
+    } else {
+        // Fallback to page_url for non-post pages (homepage, archives, etc.)
+        $comments = $wpdb->get_results($wpdb->prepare(
+            "SELECT c.id, c.parent_id, c.user_id, c.guest_token, c.post_id, c.page_url, c.pos_x, c.pos_y, c.comment, c.status, c.created_at, c.updated_at,
+             CASE
+                WHEN c.user_id = -1 THEN 'Guest'
+                ELSE u.display_name
+             END as user_name
+             FROM $table_name c
+             LEFT JOIN {$wpdb->users} u ON c.user_id = u.ID
+             WHERE c.page_url = %s AND c.status = 'active'
+             ORDER BY c.parent_id ASC, c.created_at ASC",
+            $page_url
+        ), ARRAY_A);
+        error_log('SNN CC Get Comments: Retrieved ' . count($comments) . ' comments for URL: ' . $page_url);
+    }
+
+    error_log('SNN CC Get Comments: Comment user_ids: ' . implode(', ', array_map(function($c) { return $c['user_id']; }, $comments)));
 
     wp_send_json_success($comments);
 }
@@ -1837,6 +1915,7 @@ function snn_cc_save_comment() {
     $pos_x = sanitize_text_field($_POST['pos_x']);
     $pos_y = sanitize_text_field($_POST['pos_y']);
     $page_url = esc_url_raw($_POST['page_url']);
+    $post_id = isset($_POST['post_id']) ? intval($_POST['post_id']) : 0;
     $parent_id = isset($_POST['parent_id']) ? intval($_POST['parent_id']) : 0;
 
     // Use -1 for guest users and store their token for ownership tracking
@@ -1870,13 +1949,14 @@ function snn_cc_save_comment() {
             'parent_id' => $parent_id,
             'user_id' => $user_id,
             'guest_token' => $guest_token,
+            'post_id' => $post_id,
             'page_url' => $page_url,
             'pos_x' => $pos_x,
             'pos_y' => $pos_y,
             'comment' => $comment,
             'status' => 'active'
         ),
-        array('%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s')
+        array('%d', '%d', '%s', '%d', '%s', '%s', '%s', '%s', '%s')
     );
 
     if ($result) {
