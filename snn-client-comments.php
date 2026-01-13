@@ -223,12 +223,6 @@ function snn_cc_settings_page() {
 
         <hr>
 
-        <h2>About</h2>
-        <p>
-            <strong>Version:</strong> <?php echo SNN_CC_VERSION; ?><br>
-            <strong>Author:</strong> <a href="https://github.com/sinanisler" target="_blank">Sinan Isler</a><br>
-            <strong>Plugin URL:</strong> <a href="https://github.com/sinanisler/snn-client-comments" target="_blank">GitHub Repository</a>
-        </p>
     </div>
     <?php
 }
