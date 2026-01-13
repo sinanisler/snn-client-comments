@@ -56,6 +56,25 @@ function snn_cc_create_tables() {
     require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
     dbDelta($sql);
 
+    // Guest access tokens table
+    $tokens_table = $wpdb->prefix . 'snn_client_comments_tokens';
+    $sql_tokens = "CREATE TABLE IF NOT EXISTS $tokens_table (
+        id bigint(20) NOT NULL AUTO_INCREMENT,
+        token varchar(64) NOT NULL UNIQUE,
+        page_url varchar(500) NOT NULL,
+        created_by bigint(20) NOT NULL,
+        created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        expires_at datetime NULL,
+        last_used datetime NULL,
+        is_active tinyint(1) DEFAULT 1,
+        PRIMARY KEY (id),
+        KEY token (token),
+        KEY page_url (page_url(191)),
+        KEY created_by (created_by)
+    ) $charset_collate;";
+
+    dbDelta($sql_tokens);
+
     // Set default options
     add_option('snn_cc_enabled', '1');
     add_option('snn_cc_marker_color', '#0073aa');
@@ -64,6 +83,7 @@ function snn_cc_create_tables() {
     add_option('snn_cc_allow_replies', '1');
     add_option('snn_cc_marker_style', 'initials');
     add_option('snn_cc_auto_collapse', '0');
+    add_option('snn_cc_guest_commenting', '0');
 }
 register_activation_hook(__FILE__, 'snn_cc_create_tables');
 
@@ -92,6 +112,7 @@ function snn_cc_register_settings() {
     register_setting('snn_cc_settings', 'snn_cc_allow_replies');
     register_setting('snn_cc_settings', 'snn_cc_marker_style');
     register_setting('snn_cc_settings', 'snn_cc_auto_collapse');
+    register_setting('snn_cc_settings', 'snn_cc_guest_commenting');
 }
 add_action('admin_init', 'snn_cc_register_settings');
 
@@ -112,6 +133,7 @@ function snn_cc_settings_page() {
         update_option('snn_cc_allow_replies', isset($_POST['snn_cc_allow_replies']) ? '1' : '0');
         update_option('snn_cc_marker_style', sanitize_text_field($_POST['snn_cc_marker_style']));
         update_option('snn_cc_auto_collapse', isset($_POST['snn_cc_auto_collapse']) ? '1' : '0');
+        update_option('snn_cc_guest_commenting', isset($_POST['snn_cc_guest_commenting']) ? '1' : '0');
 
         echo '<div class="notice notice-success"><p>Settings saved successfully!</p></div>';
     }
@@ -123,6 +145,7 @@ function snn_cc_settings_page() {
     $allow_replies = get_option('snn_cc_allow_replies', '1');
     $marker_style = get_option('snn_cc_marker_style', 'initials');
     $auto_collapse = get_option('snn_cc_auto_collapse', '0');
+    $guest_commenting = get_option('snn_cc_guest_commenting', '0');
 
     ?>
     <div class="wrap">
@@ -186,7 +209,12 @@ function snn_cc_settings_page() {
                         <label>
                             <input type="checkbox" name="snn_cc_auto_collapse" value="1" <?php checked($auto_collapse, '1'); ?>>
                             Auto-collapse old comments
+                        </label><br>
+                        <label>
+                            <input type="checkbox" name="snn_cc_guest_commenting" value="1" <?php checked($guest_commenting, '1'); ?>>
+                            Enable Guest Commenting
                         </label>
+                        <p class="description">Allow guests to comment using secure share links</p>
                     </td>
                 </tr>
             </table>
@@ -244,10 +272,21 @@ function snn_cc_add_admin_bar_button($wp_admin_bar) {
     // Only show on frontend if enabled
     if (!$show_in_frontend) return;
 
+    $guest_commenting = get_option('snn_cc_guest_commenting', '0');
+
+    // Add parent menu
+    $wp_admin_bar->add_node(array(
+        'id'    => 'snn-cc-menu',
+        'title' => '<span class="ab-icon dashicons dashicons-admin-comments"></span><span class="ab-label">Comments</span>',
+        'href'  => '#',
+        'meta'  => array('class' => 'snn-cc-menu-parent')
+    ));
+
     // Add comment button
     $wp_admin_bar->add_node(array(
         'id'    => 'snn-cc-add-btn',
-        'title' => '<span class="ab-icon dashicons dashicons-location-alt"></span><span class="ab-label">Add Comment</span>',
+        'parent' => 'snn-cc-menu',
+        'title' => '<span class="dashicons dashicons-location-alt"></span> Add Comment',
         'href'  => '#',
         'meta'  => array('class' => 'snn-cc-toggle-add')
     ));
@@ -255,18 +294,135 @@ function snn_cc_add_admin_bar_button($wp_admin_bar) {
     // Add sidebar toggle button
     $wp_admin_bar->add_node(array(
         'id'    => 'snn-cc-sidebar-btn',
-        'title' => '<span class="ab-icon dashicons dashicons-list-view"></span><span class="ab-label">Comments</span>',
+        'parent' => 'snn-cc-menu',
+        'title' => '<span class="dashicons dashicons-list-view"></span> View Comments',
         'href'  => '#',
         'meta'  => array('class' => 'snn-cc-toggle-sidebar')
     ));
+
+    // Add Copy Share button if guest commenting is enabled
+    if ($guest_commenting === '1') {
+        $wp_admin_bar->add_node(array(
+            'id'    => 'snn-cc-share-btn',
+            'parent' => 'snn-cc-menu',
+            'title' => '<span class="dashicons dashicons-share"></span> Copy Share Link',
+            'href'  => '#',
+            'meta'  => array('class' => 'snn-cc-copy-share')
+        ));
+    }
 }
 add_action('admin_bar_menu', 'snn_cc_add_admin_bar_button', 999);
+
+/**
+ * Generate guest access token
+ */
+function snn_cc_generate_guest_token($page_url) {
+    global $wpdb;
+    $tokens_table = $wpdb->prefix . 'snn_client_comments_tokens';
+
+    // Generate secure random token
+    $token = bin2hex(random_bytes(32));
+    $user_id = get_current_user_id();
+
+    // Insert token into database
+    $wpdb->insert(
+        $tokens_table,
+        array(
+            'token' => $token,
+            'page_url' => $page_url,
+            'created_by' => $user_id,
+            'is_active' => 1
+        ),
+        array('%s', '%s', '%d', '%d')
+    );
+
+    return $token;
+}
+
+/**
+ * Validate guest token
+ */
+function snn_cc_validate_guest_token($token, $page_url) {
+    global $wpdb;
+    $tokens_table = $wpdb->prefix . 'snn_client_comments_tokens';
+
+    $token_data = $wpdb->get_row($wpdb->prepare(
+        "SELECT * FROM $tokens_table WHERE token = %s AND page_url = %s AND is_active = 1",
+        $token,
+        $page_url
+    ));
+
+    if ($token_data) {
+        // Update last used timestamp
+        $wpdb->update(
+            $tokens_table,
+            array('last_used' => current_time('mysql')),
+            array('id' => $token_data->id),
+            array('%s'),
+            array('%d')
+        );
+
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * Check if current user is guest with valid token
+ */
+function snn_cc_is_guest_user() {
+    if (is_user_logged_in()) {
+        return false;
+    }
+
+    if (!get_option('snn_cc_guest_commenting', '0')) {
+        return false;
+    }
+
+    // Check if guest token is in session or URL
+    if (isset($_GET['snn_guest_token'])) {
+        $token = sanitize_text_field($_GET['snn_guest_token']);
+        $page_url = home_url($_SERVER['REQUEST_URI']);
+        $page_url = strtok($page_url, '?'); // Remove query string for validation
+
+        if (snn_cc_validate_guest_token($token, $page_url)) {
+            // Store token in session
+            if (!session_id()) {
+                session_start();
+            }
+            $_SESSION['snn_guest_token'] = $token;
+            $_SESSION['snn_guest_page'] = $page_url;
+            return true;
+        }
+    } elseif (isset($_SESSION['snn_guest_token']) && isset($_SESSION['snn_guest_page'])) {
+        $token = $_SESSION['snn_guest_token'];
+        $page_url = $_SESSION['snn_guest_page'];
+
+        return snn_cc_validate_guest_token($token, $page_url);
+    }
+
+    return false;
+}
+
+/**
+ * Initialize session for guest users
+ */
+function snn_cc_init_session() {
+    if (!session_id() && !is_user_logged_in()) {
+        session_start();
+    }
+}
+add_action('init', 'snn_cc_init_session', 1);
 
 /**
  * Enqueue scripts and styles
  */
 function snn_cc_enqueue_scripts() {
-    if (!is_user_logged_in()) return;
+    // Check if user is logged in or is a valid guest
+    $is_guest = snn_cc_is_guest_user();
+    if (!is_user_logged_in() && !$is_guest) return;
+
     if (!get_option('snn_cc_enabled', '1')) return;
 
     // Check display options
@@ -286,31 +442,66 @@ function snn_cc_enqueue_scripts() {
     $marker_color = get_option('snn_cc_marker_color', '#0073aa');
     $marker_style = get_option('snn_cc_marker_style', 'initials');
     $allow_replies = get_option('snn_cc_allow_replies', '1');
+    $guest_commenting = get_option('snn_cc_guest_commenting', '0');
 
-    $current_user = wp_get_current_user();
-    $user_id = get_current_user_id();
-    $user_name = $current_user->display_name;
-    $user_initials = snn_cc_get_user_initials($user_name);
+    // Handle user data for both logged in and guest users
+    if ($is_guest) {
+        $user_id = -1; // Special ID for guest users
+        $user_name = 'Guest';
+        $user_initials = 'G';
+    } else {
+        $current_user = wp_get_current_user();
+        $user_id = get_current_user_id();
+        $user_name = $current_user->display_name;
+        $user_initials = snn_cc_get_user_initials($user_name);
+    }
 
     // Check if admin bar is showing
     $admin_bar_height = is_admin_bar_showing() ? 32 : 0;
 
     // Add inline styles and scripts
-    add_action('wp_footer', function() use ($marker_color, $marker_style, $allow_replies, $user_id, $user_name, $user_initials, $admin_bar_height) {
+    add_action('wp_footer', function() use ($marker_color, $marker_style, $allow_replies, $user_id, $user_name, $user_initials, $admin_bar_height, $guest_commenting) {
     ?>
     <style>
         /* Admin Bar Styles */
-        #wpadminbar #wp-admin-bar-snn-cc-add-btn .ab-icon:before {
-            content: "\f230";
+        #wpadminbar #wp-admin-bar-snn-cc-menu .ab-icon:before {
+            content: "\f101";
             top: 2px;
         }
-        #wpadminbar #wp-admin-bar-snn-cc-sidebar-btn .ab-icon:before {
-            content: "\f163";
-            top: 2px;
+        #wpadminbar #wp-admin-bar-snn-cc-add-btn .dashicons {
+            font-size: 16px;
+            line-height: 1;
+            vertical-align: middle;
+            margin-right: 4px;
+        }
+        #wpadminbar #wp-admin-bar-snn-cc-sidebar-btn .dashicons,
+        #wpadminbar #wp-admin-bar-snn-cc-share-btn .dashicons {
+            font-size: 16px;
+            line-height: 1;
+            vertical-align: middle;
+            margin-right: 4px;
         }
         #wpadminbar #wp-admin-bar-snn-cc-add-btn.active,
         #wpadminbar #wp-admin-bar-snn-cc-sidebar-btn.active {
             background: <?php echo esc_attr($marker_color); ?> !important;
+        }
+
+        /* Share notification */
+        .snn-cc-notification {
+            position: fixed;
+            top: <?php echo $admin_bar_height + 10; ?>px;
+            right: 20px;
+            background: #4caf50;
+            color: #fff;
+            padding: 12px 20px;
+            border-radius: 4px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            z-index: 9999999;
+            animation: slideIn 0.3s ease;
+        }
+        @keyframes slideIn {
+            from { transform: translateX(400px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
         }
 
         /* Click Mode Cursor */
@@ -683,6 +874,7 @@ function snn_cc_enqueue_scripts() {
         const currentUserId = <?php echo $user_id; ?>;
         const ajaxUrl = '<?php echo admin_url('admin-ajax.php'); ?>';
         const nonce = '<?php echo wp_create_nonce('snn_cc_nonce'); ?>';
+        const guestCommenting = <?php echo $guest_commenting ? 'true' : 'false'; ?>;
 
         // Initialize
         init();
@@ -883,6 +1075,13 @@ function snn_cc_enqueue_scripts() {
             // Cancel reply
             $('body').on('click', '.snn-cc-popup-btn-cancel-reply', function() {
                 $(this).closest('.snn-cc-reply-form').remove();
+            });
+
+            // Copy Share Link
+            $('#wp-admin-bar-snn-cc-share-btn a').on('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                generateShareLink();
             });
         }
 
@@ -1182,6 +1381,59 @@ function snn_cc_enqueue_scripts() {
             });
         }
 
+        // Generate and copy share link
+        function generateShareLink() {
+            $.ajax({
+                url: ajaxUrl,
+                type: 'POST',
+                data: {
+                    action: 'snn_cc_generate_share_link',
+                    page_url: window.location.href,
+                    nonce: nonce
+                },
+                success: function(response) {
+                    if (response.success && response.data.url) {
+                        copyToClipboard(response.data.url);
+                        showNotification('Share link copied to clipboard!');
+                    } else {
+                        alert('Error generating share link: ' + (response.data || 'Unknown error'));
+                    }
+                },
+                error: function() {
+                    alert('Error generating share link');
+                }
+            });
+        }
+
+        // Copy to clipboard
+        function copyToClipboard(text) {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text);
+            } else {
+                // Fallback for older browsers
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+            }
+        }
+
+        // Show notification
+        function showNotification(message) {
+            const notification = $('<div class="snn-cc-notification">' + message + '</div>');
+            $('body').append(notification);
+
+            setTimeout(function() {
+                notification.fadeOut(300, function() {
+                    $(this).remove();
+                });
+            }, 3000);
+        }
+
         // Helper functions
         function findCommentById(id) {
             return comments.find(c => c.id == id);
@@ -1255,12 +1507,43 @@ function snn_cc_get_user_initials($name) {
 }
 
 /**
+ * AJAX: Generate share link
+ */
+function snn_cc_generate_share_link() {
+    check_ajax_referer('snn_cc_nonce', 'nonce');
+
+    if (!is_user_logged_in()) {
+        wp_send_json_error('Not logged in');
+        return;
+    }
+
+    if (!get_option('snn_cc_guest_commenting', '0')) {
+        wp_send_json_error('Guest commenting is not enabled');
+        return;
+    }
+
+    $page_url = esc_url_raw($_POST['page_url']);
+    $page_url = strtok($page_url, '?'); // Remove existing query params
+
+    // Generate token
+    $token = snn_cc_generate_guest_token($page_url);
+
+    // Build share URL
+    $share_url = add_query_arg('snn_guest_token', $token, $page_url);
+
+    wp_send_json_success(array('url' => $share_url));
+}
+add_action('wp_ajax_snn_cc_generate_share_link', 'snn_cc_generate_share_link');
+
+/**
  * AJAX: Get comments for current page
  */
 function snn_cc_get_comments() {
     check_ajax_referer('snn_cc_nonce', 'nonce');
 
-    if (!is_user_logged_in()) {
+    // Allow guests if they have valid token
+    $is_guest = snn_cc_is_guest_user();
+    if (!is_user_logged_in() && !$is_guest) {
         wp_send_json_error('Not logged in');
         return;
     }
@@ -1270,7 +1553,11 @@ function snn_cc_get_comments() {
     $page_url = esc_url_raw($_POST['page_url']);
 
     $comments = $wpdb->get_results($wpdb->prepare(
-        "SELECT c.*, u.display_name as user_name
+        "SELECT c.*,
+         CASE
+            WHEN c.user_id = -1 THEN 'Guest'
+            ELSE u.display_name
+         END as user_name
          FROM $table_name c
          LEFT JOIN {$wpdb->users} u ON c.user_id = u.ID
          WHERE c.page_url = %s AND c.status = 'active'
@@ -1281,6 +1568,7 @@ function snn_cc_get_comments() {
     wp_send_json_success($comments);
 }
 add_action('wp_ajax_snn_cc_get_comments', 'snn_cc_get_comments');
+add_action('wp_ajax_nopriv_snn_cc_get_comments', 'snn_cc_get_comments');
 
 /**
  * AJAX: Save new comment
@@ -1288,7 +1576,9 @@ add_action('wp_ajax_snn_cc_get_comments', 'snn_cc_get_comments');
 function snn_cc_save_comment() {
     check_ajax_referer('snn_cc_nonce', 'nonce');
 
-    if (!is_user_logged_in()) {
+    // Allow guests if they have valid token
+    $is_guest = snn_cc_is_guest_user();
+    if (!is_user_logged_in() && !$is_guest) {
         wp_send_json_error('Not logged in');
         return;
     }
@@ -1301,7 +1591,9 @@ function snn_cc_save_comment() {
     $pos_y = sanitize_text_field($_POST['pos_y']);
     $page_url = esc_url_raw($_POST['page_url']);
     $parent_id = isset($_POST['parent_id']) ? intval($_POST['parent_id']) : 0;
-    $user_id = get_current_user_id();
+
+    // Use -1 for guest users
+    $user_id = $is_guest ? -1 : get_current_user_id();
 
     if (empty($comment)) {
         wp_send_json_error('Comment is required');
@@ -1329,6 +1621,7 @@ function snn_cc_save_comment() {
     }
 }
 add_action('wp_ajax_snn_cc_save_comment', 'snn_cc_save_comment');
+add_action('wp_ajax_nopriv_snn_cc_save_comment', 'snn_cc_save_comment');
 
 /**
  * AJAX: Update comment
@@ -1380,6 +1673,7 @@ function snn_cc_update_comment() {
     }
 }
 add_action('wp_ajax_snn_cc_update_comment', 'snn_cc_update_comment');
+add_action('wp_ajax_nopriv_snn_cc_update_comment', 'snn_cc_update_comment');
 
 /**
  * AJAX: Delete comment
@@ -1417,3 +1711,4 @@ function snn_cc_delete_comment() {
     wp_send_json_success();
 }
 add_action('wp_ajax_snn_cc_delete_comment', 'snn_cc_delete_comment');
+add_action('wp_ajax_nopriv_snn_cc_delete_comment', 'snn_cc_delete_comment');
