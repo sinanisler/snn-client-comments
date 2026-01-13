@@ -1138,20 +1138,31 @@ function snn_cc_enqueue_scripts() {
             // Remove snn_guest_token from URL for consistent page identification
             const cleanUrl = removeTokenFromUrl(window.location.href);
 
+            // Prepare data
+            const requestData = {
+                action: 'snn_cc_get_comments',
+                page_url: cleanUrl,
+                nonce: nonce
+            };
+
+            // Include guest token if user is guest
+            if (isGuest && currentGuestToken) {
+                requestData.guest_token = currentGuestToken;
+            }
+
             $.ajax({
                 url: ajaxUrl,
                 type: 'POST',
-                data: {
-                    action: 'snn_cc_get_comments',
-                    page_url: cleanUrl,
-                    nonce: nonce
-                },
+                data: requestData,
                 success: function(response) {
                     if (response.success) {
                         comments = response.data;
                         displayMarkers();
                         updateSidebar();
                     }
+                },
+                error: function(xhr, status, error) {
+                    console.error('Load comments error:', status, error);
                 }
             });
         }
@@ -1358,18 +1369,26 @@ function snn_cc_enqueue_scripts() {
             // Remove snn_guest_token from URL for consistent page identification
             const cleanUrl = removeTokenFromUrl(window.location.href);
 
+            // Prepare data
+            const requestData = {
+                action: 'snn_cc_save_comment',
+                comment: comment,
+                pos_x: x + 'px',
+                pos_y: y + 'px',
+                page_url: cleanUrl,
+                parent_id: parentId,
+                nonce: nonce
+            };
+
+            // Include guest token if user is guest
+            if (isGuest && currentGuestToken) {
+                requestData.guest_token = currentGuestToken;
+            }
+
             $.ajax({
                 url: ajaxUrl,
                 type: 'POST',
-                data: {
-                    action: 'snn_cc_save_comment',
-                    comment: comment,
-                    pos_x: x + 'px',
-                    pos_y: y + 'px',
-                    page_url: cleanUrl,
-                    parent_id: parentId,
-                    nonce: nonce
-                },
+                data: requestData,
                 success: function(response) {
                     if (response.success) {
                         $('.snn-cc-popup').remove();
@@ -1379,8 +1398,10 @@ function snn_cc_enqueue_scripts() {
                         btn.text(originalText).prop('disabled', false);
                     }
                 },
-                error: function() {
-                    alert('Error saving comment');
+                error: function(xhr, status, error) {
+                    console.error('AJAX Error:', status, error);
+                    console.error('Response:', xhr.responseText);
+                    alert('Error saving comment: ' + error);
                     btn.text(originalText).prop('disabled', false);
                 }
             });
@@ -1392,15 +1413,23 @@ function snn_cc_enqueue_scripts() {
             const originalText = btn.text();
             btn.html('<span class="snn-cc-loading"></span>').prop('disabled', true);
 
+            // Prepare data
+            const requestData = {
+                action: 'snn_cc_update_comment',
+                comment_id: commentId,
+                comment: newComment,
+                nonce: nonce
+            };
+
+            // Include guest token if user is guest
+            if (isGuest && currentGuestToken) {
+                requestData.guest_token = currentGuestToken;
+            }
+
             $.ajax({
                 url: ajaxUrl,
                 type: 'POST',
-                data: {
-                    action: 'snn_cc_update_comment',
-                    comment_id: commentId,
-                    comment: newComment,
-                    nonce: nonce
-                },
+                data: requestData,
                 success: function(response) {
                     if (response.success) {
                         popup.remove();
@@ -1410,8 +1439,9 @@ function snn_cc_enqueue_scripts() {
                         btn.text(originalText).prop('disabled', false);
                     }
                 },
-                error: function() {
-                    alert('Error updating comment');
+                error: function(xhr, status, error) {
+                    console.error('Update comment error:', status, error);
+                    alert('Error updating comment: ' + error);
                     btn.text(originalText).prop('disabled', false);
                 }
             });
@@ -1419,14 +1449,22 @@ function snn_cc_enqueue_scripts() {
 
         // Delete comment
         function deleteComment(commentId, popup) {
+            // Prepare data
+            const requestData = {
+                action: 'snn_cc_delete_comment',
+                comment_id: commentId,
+                nonce: nonce
+            };
+
+            // Include guest token if user is guest
+            if (isGuest && currentGuestToken) {
+                requestData.guest_token = currentGuestToken;
+            }
+
             $.ajax({
                 url: ajaxUrl,
                 type: 'POST',
-                data: {
-                    action: 'snn_cc_delete_comment',
-                    comment_id: commentId,
-                    nonce: nonce
-                },
+                data: requestData,
                 success: function(response) {
                     if (response.success) {
                         popup.remove();
@@ -1435,8 +1473,9 @@ function snn_cc_enqueue_scripts() {
                         alert('Error deleting comment: ' + (response.data || 'Unknown error'));
                     }
                 },
-                error: function() {
-                    alert('Error deleting comment');
+                error: function(xhr, status, error) {
+                    console.error('Delete comment error:', status, error);
+                    alert('Error deleting comment: ' + error);
                 }
             });
         }
@@ -1530,7 +1569,7 @@ function snn_cc_get_user_initials($name) {
 function snn_cc_get_comments() {
     // Ensure session is started for guest users
     if (!session_id()) {
-        session_start();
+        @session_start();
     }
 
     check_ajax_referer('snn_cc_nonce', 'nonce');
@@ -1570,7 +1609,7 @@ add_action('wp_ajax_nopriv_snn_cc_get_comments', 'snn_cc_get_comments');
 function snn_cc_save_comment() {
     // Ensure session is started for guest users
     if (!session_id()) {
-        session_start();
+        @session_start();
     }
 
     check_ajax_referer('snn_cc_nonce', 'nonce');
@@ -1594,7 +1633,18 @@ function snn_cc_save_comment() {
     // Use -1 for guest users and store their token for ownership tracking
     if ($is_guest) {
         $user_id = -1;
-        $guest_token = isset($_SESSION['snn_guest_token']) ? $_SESSION['snn_guest_token'] : '';
+        // Try to get guest token from POST (sent by JavaScript), fallback to session
+        $guest_token = '';
+        if (isset($_POST['guest_token']) && !empty($_POST['guest_token'])) {
+            $guest_token = sanitize_text_field($_POST['guest_token']);
+        } elseif (isset($_SESSION['snn_guest_token'])) {
+            $guest_token = $_SESSION['snn_guest_token'];
+        }
+
+        // Debug: Log guest token for troubleshooting
+        if (empty($guest_token)) {
+            error_log('SNN CC: Guest token empty in save_comment. POST token: ' . (isset($_POST['guest_token']) ? $_POST['guest_token'] : 'not set') . ', Session: ' . print_r($_SESSION, true));
+        }
     } else {
         $user_id = get_current_user_id();
         $guest_token = null;
@@ -1623,7 +1673,9 @@ function snn_cc_save_comment() {
     if ($result) {
         wp_send_json_success(array('id' => $wpdb->insert_id));
     } else {
-        wp_send_json_error('Failed to save comment');
+        $error = $wpdb->last_error;
+        error_log('SNN CC: Database insert failed: ' . $error);
+        wp_send_json_error('Failed to save comment: ' . $error);
     }
 }
 add_action('wp_ajax_snn_cc_save_comment', 'snn_cc_save_comment');
@@ -1635,7 +1687,7 @@ add_action('wp_ajax_nopriv_snn_cc_save_comment', 'snn_cc_save_comment');
 function snn_cc_update_comment() {
     // Ensure session is started for guest users
     if (!session_id()) {
-        session_start();
+        @session_start();
     }
 
     check_ajax_referer('snn_cc_nonce', 'nonce');
@@ -1660,7 +1712,14 @@ function snn_cc_update_comment() {
 
     // Check ownership - different logic for guests vs logged in users
     if ($is_guest) {
-        $guest_token = isset($_SESSION['snn_guest_token']) ? $_SESSION['snn_guest_token'] : '';
+        // Try to get guest token from POST (sent by JavaScript), fallback to session
+        $guest_token = '';
+        if (isset($_POST['guest_token']) && !empty($_POST['guest_token'])) {
+            $guest_token = sanitize_text_field($_POST['guest_token']);
+        } elseif (isset($_SESSION['snn_guest_token'])) {
+            $guest_token = $_SESSION['snn_guest_token'];
+        }
+
         $existing = $wpdb->get_row($wpdb->prepare(
             "SELECT * FROM $table_name WHERE id = %d AND user_id = -1 AND guest_token = %s",
             $comment_id,
@@ -1703,7 +1762,7 @@ add_action('wp_ajax_nopriv_snn_cc_update_comment', 'snn_cc_update_comment');
 function snn_cc_delete_comment() {
     // Ensure session is started for guest users
     if (!session_id()) {
-        session_start();
+        @session_start();
     }
 
     check_ajax_referer('snn_cc_nonce', 'nonce');
@@ -1722,7 +1781,14 @@ function snn_cc_delete_comment() {
 
     // Check ownership - different logic for guests vs logged in users
     if ($is_guest) {
-        $guest_token = isset($_SESSION['snn_guest_token']) ? $_SESSION['snn_guest_token'] : '';
+        // Try to get guest token from POST (sent by JavaScript), fallback to session
+        $guest_token = '';
+        if (isset($_POST['guest_token']) && !empty($_POST['guest_token'])) {
+            $guest_token = sanitize_text_field($_POST['guest_token']);
+        } elseif (isset($_SESSION['snn_guest_token'])) {
+            $guest_token = $_SESSION['snn_guest_token'];
+        }
+
         $existing = $wpdb->get_row($wpdb->prepare(
             "SELECT * FROM $table_name WHERE id = %d AND user_id = -1 AND guest_token = %s",
             $comment_id,
