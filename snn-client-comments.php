@@ -1528,6 +1528,11 @@ function snn_cc_get_user_initials($name) {
  * AJAX: Get comments for current page
  */
 function snn_cc_get_comments() {
+    // Ensure session is started for guest users
+    if (!session_id()) {
+        session_start();
+    }
+
     check_ajax_referer('snn_cc_nonce', 'nonce');
 
     // Allow guests if they have valid token
@@ -1563,6 +1568,11 @@ add_action('wp_ajax_nopriv_snn_cc_get_comments', 'snn_cc_get_comments');
  * AJAX: Save new comment
  */
 function snn_cc_save_comment() {
+    // Ensure session is started for guest users
+    if (!session_id()) {
+        session_start();
+    }
+
     check_ajax_referer('snn_cc_nonce', 'nonce');
 
     // Allow guests if they have valid token
@@ -1623,6 +1633,11 @@ add_action('wp_ajax_nopriv_snn_cc_save_comment', 'snn_cc_save_comment');
  * AJAX: Update comment
  */
 function snn_cc_update_comment() {
+    // Ensure session is started for guest users
+    if (!session_id()) {
+        session_start();
+    }
+
     check_ajax_referer('snn_cc_nonce', 'nonce');
 
     // Allow guests if they have valid token
@@ -1686,6 +1701,11 @@ add_action('wp_ajax_nopriv_snn_cc_update_comment', 'snn_cc_update_comment');
  * AJAX: Delete comment
  */
 function snn_cc_delete_comment() {
+    // Ensure session is started for guest users
+    if (!session_id()) {
+        session_start();
+    }
+
     check_ajax_referer('snn_cc_nonce', 'nonce');
 
     // Allow guests if they have valid token
