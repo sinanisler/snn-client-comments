@@ -177,6 +177,32 @@ function snn_cc_settings_page() {
         echo '<div class="notice notice-success"><p>Guest share link has been regenerated!</p></div>';
     }
 
+    // Handle bulk delete comments
+    if (isset($_POST['snn_cc_bulk_delete']) && check_admin_referer('snn_cc_settings_nonce')) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'snn_client_comments';
+
+        if (isset($_POST['delete_comment_ids']) && is_array($_POST['delete_comment_ids'])) {
+            $deleted_count = 0;
+            foreach ($_POST['delete_comment_ids'] as $comment_id) {
+                $comment_id = intval($comment_id);
+                // Delete comment and its replies
+                $wpdb->delete($table_name, array('id' => $comment_id), array('%d'));
+                $wpdb->delete($table_name, array('parent_id' => $comment_id), array('%d'));
+                $deleted_count++;
+            }
+            echo '<div class="notice notice-success"><p>' . $deleted_count . ' comment(s) deleted successfully!</p></div>';
+        }
+    }
+
+    // Handle clear all comments
+    if (isset($_POST['snn_cc_clear_all']) && check_admin_referer('snn_cc_settings_nonce')) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'snn_client_comments';
+        $wpdb->query("DELETE FROM $table_name");
+        echo '<div class="notice notice-success"><p>All comments have been cleared!</p></div>';
+    }
+
     // Save settings
     if (isset($_POST['snn_cc_save_settings']) && check_admin_referer('snn_cc_settings_nonce')) {
         update_option('snn_cc_enabled', isset($_POST['snn_cc_enabled']) ? '1' : '0');
@@ -295,6 +321,131 @@ function snn_cc_settings_page() {
                 <td><?php echo intval($total_users); ?></td>
             </tr>
         </table>
+
+        <hr>
+
+        <h2>All Comments</h2>
+        <?php
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'snn_client_comments';
+
+        // Get all comments with page info (only parent comments for cleaner display)
+        $all_comments = $wpdb->get_results(
+            "SELECT c.*,
+             CASE
+                WHEN c.user_id = -1 THEN 'Guest'
+                ELSE u.display_name
+             END as user_name,
+             (SELECT COUNT(*) FROM $table_name WHERE parent_id = c.id) as reply_count
+             FROM $table_name c
+             LEFT JOIN {$wpdb->users} u ON c.user_id = u.ID
+             WHERE c.parent_id = 0 AND c.status = 'active'
+             ORDER BY c.created_at DESC"
+        );
+
+        if (!empty($all_comments)): ?>
+        <form method="post" action="" id="snn-cc-comments-form">
+            <?php wp_nonce_field('snn_cc_settings_nonce'); ?>
+
+            <div style="margin-bottom: 15px;">
+                <button type="submit" name="snn_cc_bulk_delete" class="button" onclick="return confirm('Are you sure you want to delete the selected comments? This will also delete all replies.');">Delete Selected</button>
+                <button type="submit" name="snn_cc_clear_all" class="button button-link-delete" style="margin-left: 10px;" onclick="return confirm('Are you sure you want to delete ALL comments? This action cannot be undone!');">Clear All Comments</button>
+                <label style="margin-left: 15px;">
+                    <input type="checkbox" id="snn-cc-select-all"> Select All
+                </label>
+            </div>
+
+            <table class="widefat" style="margin-top: 10px;">
+                <thead>
+                    <tr>
+                        <th style="width: 40px;"><input type="checkbox" id="snn-cc-select-all-header"></th>
+                        <th style="width: 15%;">User</th>
+                        <th style="width: 40%;">Comment</th>
+                        <th style="width: 25%;">Page</th>
+                        <th style="width: 10%;">Replies</th>
+                        <th style="width: 10%;">Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($all_comments as $comment): ?>
+                    <tr>
+                        <td>
+                            <input type="checkbox" name="delete_comment_ids[]" value="<?php echo intval($comment->id); ?>" class="snn-cc-comment-checkbox">
+                        </td>
+                        <td>
+                            <strong><?php echo esc_html($comment->user_name); ?></strong>
+                        </td>
+                        <td>
+                            <?php
+                            $comment_text = esc_html($comment->comment);
+                            echo strlen($comment_text) > 100 ? substr($comment_text, 0, 100) . '...' : $comment_text;
+                            ?>
+                        </td>
+                        <td>
+                            <?php
+                            $page_title = 'Unknown Page';
+                            $page_id = url_to_postid($comment->page_url);
+
+                            if ($page_id) {
+                                $page_title = get_the_title($page_id);
+                            } elseif ($comment->page_url === home_url('/')) {
+                                $page_title = 'Home Page';
+                            } else {
+                                // Try to extract a readable name from URL
+                                $path = parse_url($comment->page_url, PHP_URL_PATH);
+                                $page_title = ucwords(str_replace(array('/', '-', '_'), ' ', trim($path, '/')));
+                                if (empty($page_title)) $page_title = 'Home Page';
+                            }
+                            ?>
+                            <a href="<?php echo esc_url($comment->page_url); ?>" target="_blank" title="<?php echo esc_attr($comment->page_url); ?>">
+                                <?php echo esc_html($page_title); ?>
+                                <span class="dashicons dashicons-external" style="font-size: 14px; text-decoration: none;"></span>
+                            </a>
+                        </td>
+                        <td>
+                            <?php echo intval($comment->reply_count); ?>
+                        </td>
+                        <td>
+                            <?php echo esc_html(mysql2date('M j, Y', $comment->created_at)); ?>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </form>
+
+        <script>
+        jQuery(document).ready(function($) {
+            // Select all checkboxes functionality
+            $('#snn-cc-select-all, #snn-cc-select-all-header').on('change', function() {
+                var isChecked = $(this).prop('checked');
+                $('.snn-cc-comment-checkbox').prop('checked', isChecked);
+                $('#snn-cc-select-all, #snn-cc-select-all-header').prop('checked', isChecked);
+            });
+
+            // Update select all when individual checkboxes change
+            $('.snn-cc-comment-checkbox').on('change', function() {
+                var totalCheckboxes = $('.snn-cc-comment-checkbox').length;
+                var checkedCheckboxes = $('.snn-cc-comment-checkbox:checked').length;
+                $('#snn-cc-select-all, #snn-cc-select-all-header').prop('checked', totalCheckboxes === checkedCheckboxes);
+            });
+
+            // Validate before bulk delete
+            $('#snn-cc-comments-form').on('submit', function(e) {
+                if ($(e.originalEvent.submitter).attr('name') === 'snn_cc_bulk_delete') {
+                    if ($('.snn-cc-comment-checkbox:checked').length === 0) {
+                        e.preventDefault();
+                        alert('Please select at least one comment to delete.');
+                        return false;
+                    }
+                }
+            });
+        });
+        </script>
+
+        <?php else: ?>
+        <p style="color: #666;">No comments found yet.</p>
+        <?php endif; ?>
 
         <hr>
 
