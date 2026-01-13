@@ -11,17 +11,49 @@ Visual commenting system for WordPress - Add comments directly on any page locat
 
 ## Features
 
+### Core Commenting
 - Click anywhere on a page to add visual comments
 - Comment markers displayed as user initials, numbers, or icons
 - 300px toggleable sidebar showing all page comments
 - Threaded replies for multi-user collaboration
 - Edit and delete your own comments
-- Admin bar buttons for quick access
-- Customizable marker colors
 - Per-page comment system
 - User avatars with color coding
-- Real-time comment statistics
-- Admin settings page
+
+### Guest Commenting System
+- Secure share links for guest access (no login required)
+- Guest token-based authentication
+- Guests can comment anywhere on the site
+- Guest ownership tracking for edit/delete permissions
+- Regenerate share links to revoke access
+- Session-based guest token management
+- Fixed guest control buttons for easy access
+
+### User Interface
+- Admin bar menu with comment actions
+- Dedicated buttons for guests (without admin bar)
+- Responsive comment popups with smart positioning
+- Visual markers with reply indicators
+- Click-mode cursor for precise placement
+- Sidebar with comment preview and navigation
+- Smooth animations and transitions
+
+### Administration
+- Comprehensive admin settings page
+- Real-time comment statistics (total comments, replies, active users)
+- Bulk comment management (delete selected)
+- Clear all comments option
+- View all comments with page links
+- Customizable marker colors
 - Frontend and admin display options
 - Auto-collapse old comments option
+- Toggle guest commenting on/off
+
+### Technical Features
 - Automatic GitHub updates
+- Database schema versioning with auto-upgrade
+- Session management for guest users
+- AJAX-powered real-time updates
+- Security with nonce verification
+- Clean URL handling (token-free page identification)
+- Proper ownership verification for all operations
