@@ -79,7 +79,6 @@ function snn_cc_create_tables() {
     add_option('snn_cc_enabled', '1');
     add_option('snn_cc_marker_color', '#0073aa');
     add_option('snn_cc_show_in_frontend', '1');
-    add_option('snn_cc_show_in_admin', '1');
     add_option('snn_cc_allow_replies', '1');
     add_option('snn_cc_marker_style', 'initials');
     add_option('snn_cc_auto_collapse', '0');
@@ -108,7 +107,6 @@ function snn_cc_register_settings() {
     register_setting('snn_cc_settings', 'snn_cc_enabled');
     register_setting('snn_cc_settings', 'snn_cc_marker_color');
     register_setting('snn_cc_settings', 'snn_cc_show_in_frontend');
-    register_setting('snn_cc_settings', 'snn_cc_show_in_admin');
     register_setting('snn_cc_settings', 'snn_cc_allow_replies');
     register_setting('snn_cc_settings', 'snn_cc_marker_style');
     register_setting('snn_cc_settings', 'snn_cc_auto_collapse');
@@ -129,7 +127,6 @@ function snn_cc_settings_page() {
         update_option('snn_cc_enabled', isset($_POST['snn_cc_enabled']) ? '1' : '0');
         update_option('snn_cc_marker_color', sanitize_hex_color($_POST['snn_cc_marker_color']));
         update_option('snn_cc_show_in_frontend', isset($_POST['snn_cc_show_in_frontend']) ? '1' : '0');
-        update_option('snn_cc_show_in_admin', isset($_POST['snn_cc_show_in_admin']) ? '1' : '0');
         update_option('snn_cc_allow_replies', isset($_POST['snn_cc_allow_replies']) ? '1' : '0');
         update_option('snn_cc_marker_style', sanitize_text_field($_POST['snn_cc_marker_style']));
         update_option('snn_cc_auto_collapse', isset($_POST['snn_cc_auto_collapse']) ? '1' : '0');
@@ -141,7 +138,6 @@ function snn_cc_settings_page() {
     $enabled = get_option('snn_cc_enabled', '1');
     $marker_color = get_option('snn_cc_marker_color', '#0073aa');
     $show_in_frontend = get_option('snn_cc_show_in_frontend', '1');
-    $show_in_admin = get_option('snn_cc_show_in_admin', '1');
     $allow_replies = get_option('snn_cc_allow_replies', '1');
     $marker_style = get_option('snn_cc_marker_style', 'initials');
     $auto_collapse = get_option('snn_cc_auto_collapse', '0');
@@ -179,10 +175,6 @@ function snn_cc_settings_page() {
                         <label>
                             <input type="checkbox" name="snn_cc_show_in_frontend" value="1" <?php checked($show_in_frontend, '1'); ?>>
                             Show in frontend
-                        </label><br>
-                        <label>
-                            <input type="checkbox" name="snn_cc_show_in_admin" value="1" <?php checked($show_in_admin, '1'); ?>>
-                            Show in admin pages
                         </label>
                     </td>
                 </tr>
@@ -264,7 +256,6 @@ function snn_cc_add_admin_bar_button($wp_admin_bar) {
 
     // Check display options
     $show_in_frontend = get_option('snn_cc_show_in_frontend', '1');
-    $show_in_admin = get_option('snn_cc_show_in_admin', '1');
 
     // Don't show buttons on admin dashboard/pages (only frontend)
     if (is_admin()) return;
@@ -427,7 +418,6 @@ function snn_cc_enqueue_scripts() {
 
     // Check display options
     $show_in_frontend = get_option('snn_cc_show_in_frontend', '1');
-    $show_in_admin = get_option('snn_cc_show_in_admin', '1');
 
     // Don't show on admin dashboard/pages (only frontend)
     if (is_admin()) return;
