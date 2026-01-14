@@ -2014,3 +2014,68 @@ function snn_cc_delete_comment() {
 }
 add_action('wp_ajax_snn_cc_delete_comment', 'snn_cc_delete_comment');
 add_action('wp_ajax_nopriv_snn_cc_delete_comment', 'snn_cc_delete_comment');
+
+/**
+ * Add "Delete All Data" link to plugin action links on plugins page
+ */
+function snn_cc_add_plugin_action_links($links, $file) {
+    if ($file === plugin_basename(__FILE__)) {
+        $delete_link = '<a href="' . wp_nonce_url(admin_url('plugins.php?snn_cc_delete_all_data=1'), 'snn_cc_delete_all_data') . '" style="color: #b32d2e;" onclick="return confirm(\'Are you sure you want to delete ALL plugin data? This will remove all comments, settings, and database tables. This action cannot be undone!\');">Delete All Data</a>';
+        $links['delete_data'] = $delete_link;
+    }
+    return $links;
+}
+add_filter('plugin_action_links', 'snn_cc_add_plugin_action_links', 10, 2);
+
+/**
+ * Handle delete all data request
+ */
+function snn_cc_handle_delete_all_data() {
+    if (!isset($_GET['snn_cc_delete_all_data']) || $_GET['snn_cc_delete_all_data'] !== '1') {
+        return;
+    }
+
+    // Verify nonce and permissions
+    if (!current_user_can('manage_options')) {
+        wp_die('You do not have permission to perform this action.');
+    }
+
+    if (!wp_verify_nonce($_GET['_wpnonce'], 'snn_cc_delete_all_data')) {
+        wp_die('Security check failed.');
+    }
+
+    global $wpdb;
+
+    // Drop database tables
+    $comments_table = $wpdb->prefix . 'snn_client_comments';
+    $tokens_table = $wpdb->prefix . 'snn_client_comments_tokens';
+
+    $wpdb->query("DROP TABLE IF EXISTS $comments_table");
+    $wpdb->query("DROP TABLE IF EXISTS $tokens_table");
+
+    // Delete all plugin options
+    delete_option('snn_cc_enabled');
+    delete_option('snn_cc_marker_color');
+    delete_option('snn_cc_show_in_frontend');
+    delete_option('snn_cc_allow_replies');
+    delete_option('snn_cc_marker_style');
+    delete_option('snn_cc_auto_collapse');
+    delete_option('snn_cc_guest_commenting');
+    delete_option('snn_cc_db_version');
+    delete_option('snn_cc_global_guest_token');
+
+    // Redirect back to plugins page with success message
+    wp_redirect(admin_url('plugins.php?snn_cc_data_deleted=1'));
+    exit;
+}
+add_action('admin_init', 'snn_cc_handle_delete_all_data');
+
+/**
+ * Show admin notice after data deletion
+ */
+function snn_cc_show_deletion_notice() {
+    if (isset($_GET['snn_cc_data_deleted']) && $_GET['snn_cc_data_deleted'] === '1') {
+        echo '<div class="notice notice-success is-dismissible"><p><strong>SNN Client Comments:</strong> All plugin data has been deleted successfully. You can now deactivate and delete the plugin.</p></div>';
+    }
+}
+add_action('admin_notices', 'snn_cc_show_deletion_notice');
