@@ -540,7 +540,7 @@ function snn_cc_add_admin_bar_button($wp_admin_bar) {
     $wp_admin_bar->add_node(array(
         'id'    => 'snn-cc-add-btn',
         'parent' => 'snn-cc-menu',
-        'title' => '<span class="dashicons dashicons-location-alt"></span> Add Comment',
+        'title' => '+ Add Comment',
         'href'  => '#',
         'meta'  => array('class' => 'snn-cc-toggle-add')
     ));
@@ -549,7 +549,7 @@ function snn_cc_add_admin_bar_button($wp_admin_bar) {
     $wp_admin_bar->add_node(array(
         'id'    => 'snn-cc-sidebar-btn',
         'parent' => 'snn-cc-menu',
-        'title' => '<span class="dashicons dashicons-list-view"></span> View Comments',
+        'title' => '☰ View Comments',
         'href'  => '#',
         'meta'  => array('class' => 'snn-cc-toggle-sidebar')
     ));
@@ -1141,10 +1141,10 @@ function snn_cc_enqueue_scripts() {
         function createGuestControls() {
             const controls = $('<div class="snn-cc-guest-controls">' +
                 '<button class="snn-cc-guest-btn snn-cc-guest-add-btn" title="Add Comment">' +
-                    '<span class="dashicons dashicons-location-alt"></span>' +
+                    '+' +
                 '</button>' +
                 '<button class="snn-cc-guest-btn snn-cc-guest-sidebar-btn" title="View Comments">' +
-                    '<span class="dashicons dashicons-list-view"></span>' +
+                    '☰' +
                 '</button>' +
             '</div>');
             $('body').append(controls);
