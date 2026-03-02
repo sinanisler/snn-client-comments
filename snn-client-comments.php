@@ -553,6 +553,15 @@ function snn_cc_add_admin_bar_button($wp_admin_bar) {
         'href'  => '#',
         'meta'  => array('class' => 'snn-cc-toggle-sidebar')
     ));
+
+    // Add all site comments button
+    $wp_admin_bar->add_node(array(
+        'id'    => 'snn-cc-allsite-btn',
+        'parent' => 'snn-cc-menu',
+        'title' => '🌐 All Comments',
+        'href'  => '#',
+        'meta'  => array('class' => 'snn-cc-toggle-allsite')
+    ));
 }
 add_action('admin_bar_menu', 'snn_cc_add_admin_bar_button', 999);
 
@@ -886,6 +895,127 @@ function snn_cc_enqueue_scripts() {
             font-size: 14px;
         }
 
+        /* All Site Comments Panel */
+        .snn-cc-allsite-panel {
+            position: fixed;
+            top: <?php echo $admin_bar_height; ?>px;
+            right: -370px;
+            width: 350px;
+            height: calc(100vh - <?php echo $admin_bar_height; ?>px);
+            background: #fff;
+            box-shadow: -2px 0 10px rgba(0,0,0,0.1);
+            z-index: 999998;
+            transition: right 0.3s ease;
+            overflow-y: auto;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, sans-serif;
+        }
+        .snn-cc-allsite-panel.active {
+            right: 0;
+        }
+        .snn-cc-allsite-header {
+            padding: 15px;
+            background: #f5f5f5;
+            border-bottom: 1px solid #ddd;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        .snn-cc-allsite-header h3 {
+            margin: 0;
+            font-size: 16px;
+            color: #333;
+        }
+        .snn-cc-allsite-close {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: none;
+            border: none;
+            font-size: 20px;
+            cursor: pointer;
+            color: #666;
+            padding: 0;
+            width: 24px;
+            height: 24px;
+            line-height: 1;
+        }
+        .snn-cc-allsite-close:hover {
+            color: #000;
+        }
+        .snn-cc-allsite-list {
+            padding: 10px;
+        }
+        .snn-cc-allsite-page-group {
+            margin-bottom: 14px;
+        }
+        .snn-cc-allsite-page-title {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #999;
+            padding: 6px 4px 4px;
+            border-bottom: 1px solid #eee;
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .snn-cc-allsite-page-link {
+            color: #999;
+            text-decoration: none;
+        }
+        .snn-cc-allsite-page-link:hover {
+            color: <?php echo esc_attr($marker_color); ?>;
+            text-decoration: underline;
+        }
+        .snn-cc-allsite-current-badge {
+            background: <?php echo esc_attr($marker_color); ?>;
+            color: #fff;
+            font-size: 9px;
+            padding: 1px 5px;
+            border-radius: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .snn-cc-allsite-item {
+            padding: 10px 12px;
+            margin-bottom: 6px;
+            background: #f9f9f9;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.2s;
+            border-left: 3px solid <?php echo esc_attr($marker_color); ?>;
+        }
+        .snn-cc-allsite-item:hover {
+            background: #f0f0f0;
+        }
+        .snn-cc-allsite-item-user {
+            font-weight: bold;
+            font-size: 13px;
+            color: #333;
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+        }
+        .snn-cc-allsite-item-text {
+            font-size: 12px;
+            color: #666;
+            line-height: 1.4;
+            margin-bottom: 4px;
+        }
+        .snn-cc-allsite-item-meta {
+            font-size: 11px;
+            color: #999;
+        }
+        .snn-cc-allsite-empty,
+        .snn-cc-allsite-loading {
+            padding: 30px;
+            text-align: center;
+            color: #999;
+            font-size: 14px;
+        }
+
         /* Comment Popup */
         .snn-cc-popup {
             position: absolute;
@@ -1102,6 +1232,8 @@ function snn_cc_enqueue_scripts() {
         let clickMode = false;
         let comments = [];
         let sidebarOpen = false;
+        let allSitePanelOpen = false;
+        let allSiteComments = [];
 
         const markerColor = '<?php echo esc_js($marker_color); ?>';
         const markerStyle = '<?php echo esc_js($marker_style); ?>';
@@ -1118,11 +1250,13 @@ function snn_cc_enqueue_scripts() {
 
         function init() {
             createSidebar();
+            createAllSitePanel();
             <?php if ($is_guest): ?>
             createGuestControls();
             <?php endif; ?>
             loadComments();
             bindEvents();
+            checkViewCommentParam();
         }
 
         // Create sidebar HTML
@@ -1146,8 +1280,23 @@ function snn_cc_enqueue_scripts() {
                 '<button class="snn-cc-guest-btn snn-cc-guest-sidebar-btn" title="View Comments">' +
                     '☰' +
                 '</button>' +
+                '<button class="snn-cc-guest-btn snn-cc-guest-allsite-btn" title="All Site Comments">' +
+                    '🌐' +
+                '</button>' +
             '</div>');
             $('body').append(controls);
+        }
+
+        // Create all site comments panel HTML
+        function createAllSitePanel() {
+            const panel = $('<div class="snn-cc-allsite-panel">' +
+                '<div class="snn-cc-allsite-header">' +
+                    '<h3>All Site Comments</h3>' +
+                    '<button class="snn-cc-allsite-close">&times;</button>' +
+                '</div>' +
+                '<div class="snn-cc-allsite-list"></div>' +
+            '</div>');
+            $('body').append(panel);
         }
 
         // Bind events
@@ -1166,6 +1315,24 @@ function snn_cc_enqueue_scripts() {
                 sidebarOpen = !sidebarOpen;
                 $('.snn-cc-sidebar').toggleClass('active', sidebarOpen);
                 $('#wp-admin-bar-snn-cc-sidebar-btn, .snn-cc-guest-sidebar-btn').toggleClass('active', sidebarOpen);
+            });
+
+            // Toggle all site comments panel
+            $('#wp-admin-bar-snn-cc-allsite-btn, .snn-cc-guest-allsite-btn').on('click', function(e) {
+                e.preventDefault();
+                allSitePanelOpen = !allSitePanelOpen;
+                if (allSitePanelOpen) {
+                    loadAllSiteComments();
+                }
+                $('.snn-cc-allsite-panel').toggleClass('active', allSitePanelOpen);
+                $('#wp-admin-bar-snn-cc-allsite-btn, .snn-cc-guest-allsite-btn').toggleClass('active', allSitePanelOpen);
+            });
+
+            $('body').on('click', '.snn-cc-allsite-close', function(e) {
+                e.preventDefault();
+                allSitePanelOpen = false;
+                $('.snn-cc-allsite-panel').removeClass('active');
+                $('#wp-admin-bar-snn-cc-allsite-btn, .snn-cc-guest-allsite-btn').removeClass('active');
             });
 
             // Handle click to add comment
@@ -1226,6 +1393,51 @@ function snn_cc_enqueue_scripts() {
                     if (comment) {
                         showCommentPopup(comment, marker.offset().left, marker.offset().top);
                     }
+                }
+            });
+
+            // Click on all-site panel item
+            $('body').on('click', '.snn-cc-allsite-item', function(e) {
+                const commentId = $(this).data('comment-id');
+                const pageUrl   = $(this).data('page-url');
+                const isSamePage = $(this).data('same-page') === '1';
+
+                if (isSamePage) {
+                    // Close panel and navigate to the marker on this page
+                    allSitePanelOpen = false;
+                    $('.snn-cc-allsite-panel').removeClass('active');
+                    $('#wp-admin-bar-snn-cc-allsite-btn, .snn-cc-guest-allsite-btn').removeClass('active');
+
+                    const marker = $('.snn-cc-marker[data-comment-id="' + commentId + '"]');
+                    if (marker.length) {
+                        $('html, body').animate({
+                            scrollTop: marker.offset().top - 150
+                        }, 500);
+                        marker.css('transform', 'scale(1.4)');
+                        setTimeout(function() {
+                            marker.css('transform', '');
+                            const comment = findCommentById(parseInt(commentId));
+                            if (comment) {
+                                showCommentPopup(comment, marker.offset().left, marker.offset().top);
+                            }
+                        }, 500);
+                    }
+                } else {
+                    // Navigate to the other page, passing the comment ID
+                    let targetUrl = pageUrl;
+                    try {
+                        const urlObj = new URL(pageUrl);
+                        urlObj.searchParams.set('snn_view_comment', commentId);
+                        <?php if ($is_guest): ?>
+                        if (currentGuestToken) {
+                            urlObj.searchParams.set('snn_guest_token', currentGuestToken);
+                        }
+                        <?php endif; ?>
+                        targetUrl = urlObj.toString();
+                    } catch(err) {
+                        targetUrl = pageUrl + (pageUrl.indexOf('?') === -1 ? '?' : '&') + 'snn_view_comment=' + commentId;
+                    }
+                    window.location.href = targetUrl;
                 }
             });
 
@@ -1426,6 +1638,139 @@ function snn_cc_enqueue_scripts() {
 
                 list.append(item);
             });
+        }
+
+        // Load all sitewide comments from server
+        function loadAllSiteComments() {
+            const list = $('.snn-cc-allsite-list');
+            list.html('<div class="snn-cc-allsite-loading"><span class="snn-cc-loading"></span> Loading...</div>');
+
+            const requestData = {
+                action: 'snn_cc_get_all_comments',
+                nonce: nonce
+            };
+
+            if (isGuest && currentGuestToken) {
+                requestData.guest_token = currentGuestToken;
+            }
+
+            $.ajax({
+                url: ajaxUrl,
+                type: 'POST',
+                data: requestData,
+                success: function(response) {
+                    if (response.success) {
+                        allSiteComments = response.data;
+                        updateAllSitePanel();
+                    } else {
+                        list.html('<div class="snn-cc-allsite-empty">Could not load comments.</div>');
+                    }
+                },
+                error: function() {
+                    list.html('<div class="snn-cc-allsite-empty">Could not load comments.</div>');
+                }
+            });
+        }
+
+        // Render the all-site panel grouped by page
+        function updateAllSitePanel() {
+            const list = $('.snn-cc-allsite-list');
+            list.empty();
+
+            const parentComments = allSiteComments.filter(c => c.parent_id == 0);
+
+            if (parentComments.length === 0) {
+                list.html('<div class="snn-cc-allsite-empty">No comments found sitewide.</div>');
+                return;
+            }
+
+            // Group by page_url
+            const grouped = {};
+            parentComments.forEach(function(comment) {
+                const url = comment.page_url;
+                if (!grouped[url]) grouped[url] = [];
+                grouped[url].push(comment);
+            });
+
+            const currentCleanUrl = removeTokenFromUrl(window.location.href);
+
+            Object.keys(grouped).forEach(function(pageUrl) {
+                const pageComments = grouped[pageUrl];
+                const isSamePage = (pageUrl === currentCleanUrl);
+
+                // Derive a human-readable page name from the URL
+                let pageName = pageUrl;
+                try {
+                    const urlObj = new URL(pageUrl);
+                    const path = urlObj.pathname.replace(/\/$/, '');
+                    if (path === '' || path === '/') {
+                        pageName = 'Home Page';
+                    } else {
+                        pageName = path.split('/').pop();
+                        pageName = decodeURIComponent(pageName).replace(/-/g, ' ').replace(/_/g, ' ');
+                        pageName = pageName.charAt(0).toUpperCase() + pageName.slice(1);
+                    }
+                } catch(err) { /* keep raw URL */ }
+
+                const group = $('<div class="snn-cc-allsite-page-group"></div>');
+                const titleBar = $('<div class="snn-cc-allsite-page-title">' +
+                    '<a href="' + escapeHtml(pageUrl) + '" target="_blank" class="snn-cc-allsite-page-link" title="' + escapeHtml(pageUrl) + '">' + escapeHtml(pageName) + '</a>' +
+                    (isSamePage ? ' <span class="snn-cc-allsite-current-badge">current</span>' : '') +
+                '</div>');
+                group.append(titleBar);
+
+                pageComments.forEach(function(comment) {
+                    const replyCount = allSiteComments.filter(c => c.parent_id == comment.id).length;
+                    const item = $('<div class="snn-cc-allsite-item"' +
+                        ' data-comment-id="' + comment.id + '"' +
+                        ' data-page-url="' + escapeHtml(pageUrl) + '"' +
+                        ' data-same-page="' + (isSamePage ? '1' : '0') + '">' +
+                        '<div class="snn-cc-allsite-item-user">' +
+                            '<span class="snn-cc-sidebar-item-avatar" style="background:' + getUserColor(comment.user_id) + '">' + getInitials(comment.user_name) + '</span>' +
+                            escapeHtml(comment.user_name) +
+                        '</div>' +
+                        '<div class="snn-cc-allsite-item-text">' + escapeHtml(comment.comment.substring(0, 80)) + (comment.comment.length > 80 ? '...' : '') + '</div>' +
+                        '<div class="snn-cc-allsite-item-meta">' +
+                            formatDate(comment.created_at) +
+                            (replyCount > 0 ? ' &bull; ' + replyCount + ' ' + (replyCount === 1 ? 'reply' : 'replies') : '') +
+                        '</div>' +
+                    '</div>');
+                    group.append(item);
+                });
+
+                list.append(group);
+            });
+        }
+
+        // Auto-open a specific comment if snn_view_comment is in the URL
+        function checkViewCommentParam() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const viewCommentId = urlParams.get('snn_view_comment');
+            if (!viewCommentId) return;
+
+            // Poll until the marker appears (comments finish loading)
+            let attempts = 0;
+            const checkInterval = setInterval(function() {
+                attempts++;
+                const marker = $('.snn-cc-marker[data-comment-id="' + viewCommentId + '"]');
+                if (marker.length || attempts > 50) {
+                    clearInterval(checkInterval);
+                    if (!marker.length) return;
+                    setTimeout(function() {
+                        $('html, body').animate({
+                            scrollTop: marker.offset().top - 150
+                        }, 800);
+                        marker.css('transform', 'scale(1.4)');
+                        setTimeout(function() {
+                            marker.css('transform', '');
+                            const comment = findCommentById(parseInt(viewCommentId));
+                            if (comment) {
+                                showCommentPopup(comment, marker.offset().left, marker.offset().top);
+                            }
+                        }, 800);
+                    }, 300);
+                }
+            }, 100);
         }
 
         // Show add comment popup
@@ -1733,10 +2078,14 @@ function snn_cc_enqueue_scripts() {
             try {
                 const urlObj = new URL(url);
                 urlObj.searchParams.delete('snn_guest_token');
+                urlObj.searchParams.delete('snn_view_comment');
                 return urlObj.toString();
             } catch (e) {
                 // Fallback for invalid URLs
-                return url.replace(/[?&]snn_guest_token=[^&]+/, '').replace(/\?$/, '');
+                return url
+                    .replace(/[?&]snn_guest_token=[^&]+/, '')
+                    .replace(/[?&]snn_view_comment=[^&]+/, '')
+                    .replace(/\?$/, '');
             }
         }
     });
@@ -2014,6 +2363,43 @@ function snn_cc_delete_comment() {
 }
 add_action('wp_ajax_snn_cc_delete_comment', 'snn_cc_delete_comment');
 add_action('wp_ajax_nopriv_snn_cc_delete_comment', 'snn_cc_delete_comment');
+
+/**
+ * AJAX: Get all comments sitewide (no page filter)
+ */
+function snn_cc_get_all_comments() {
+    if (!session_id()) {
+        @session_start();
+    }
+
+    check_ajax_referer('snn_cc_nonce', 'nonce');
+
+    $is_guest = snn_cc_is_guest_user();
+    if (!is_user_logged_in() && !$is_guest) {
+        wp_send_json_error('Not logged in');
+        return;
+    }
+
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'snn_client_comments';
+
+    $comments = $wpdb->get_results(
+        "SELECT c.id, c.parent_id, c.user_id, c.guest_token, c.page_url, c.pos_x, c.pos_y, c.comment, c.status, c.created_at, c.updated_at,
+         CASE
+            WHEN c.user_id = -1 THEN 'Guest'
+            ELSE u.display_name
+         END as user_name
+         FROM $table_name c
+         LEFT JOIN {$wpdb->users} u ON c.user_id = u.ID
+         WHERE c.status = 'active'
+         ORDER BY c.page_url ASC, c.parent_id ASC, c.created_at DESC",
+        ARRAY_A
+    );
+
+    wp_send_json_success($comments);
+}
+add_action('wp_ajax_snn_cc_get_all_comments', 'snn_cc_get_all_comments');
+add_action('wp_ajax_nopriv_snn_cc_get_all_comments', 'snn_cc_get_all_comments');
 
 /**
  * Add "Delete All Data" link to plugin action links on plugins page
