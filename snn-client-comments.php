@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) {
 
 // Define plugin constants
 define('SNN_CC_VERSION', '1.0.0');
-define('SNN_CC_DB_VERSION', '1.2'); // Database schema version
+define('SNN_CC_DB_VERSION', '1.3'); // Database schema version
 define('SNN_CC_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('SNN_CC_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -44,6 +44,9 @@ function snn_cc_create_tables() {
         page_url varchar(500) NOT NULL,
         pos_x varchar(20) NOT NULL,
         pos_y varchar(20) NOT NULL,
+        pos_x_rel varchar(20) DEFAULT NULL,
+        pos_y_rel varchar(20) DEFAULT NULL,
+        elem_path varchar(500) DEFAULT NULL,
         comment text NOT NULL,
         status varchar(20) DEFAULT 'active',
         checked_by bigint(20) DEFAULT NULL,
@@ -146,6 +149,19 @@ function snn_cc_upgrade_database($from_version) {
         $wpdb->query("ALTER TABLE $table_name ADD COLUMN checked_at datetime DEFAULT NULL");
     }
     
+    // Add pos_x_rel, pos_y_rel, elem_path columns if missing (added in v1.3)
+    $rel_col_exists = $wpdb->get_results($wpdb->prepare(
+        "SELECT * FROM INFORMATION_SCHEMA.COLUMNS 
+         WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND COLUMN_NAME = 'pos_x_rel'",
+        DB_NAME,
+        $table_name
+    ));
+    if (empty($rel_col_exists)) {
+        $wpdb->query("ALTER TABLE $table_name ADD COLUMN pos_x_rel varchar(20) DEFAULT NULL AFTER pos_y");
+        $wpdb->query("ALTER TABLE $table_name ADD COLUMN pos_y_rel varchar(20) DEFAULT NULL AFTER pos_x_rel");
+        $wpdb->query("ALTER TABLE $table_name ADD COLUMN elem_path varchar(500) DEFAULT NULL AFTER pos_y_rel");
+    }
+
     // Re-run table creation to ensure all tables exist with latest schema
     snn_cc_create_tables();
     
@@ -1456,7 +1472,17 @@ function snn_cc_enqueue_scripts() {
                 const x = e.pageX;
                 const y = e.pageY;
 
-                showAddCommentPopup(x, y);
+                // Capture position relative to the clicked element so markers
+                // stay anchored to content regardless of screen/viewport width
+                const target    = $(e.target);
+                const tOffset   = target.offset();
+                const tWidth    = target.outerWidth()  || 1;
+                const tHeight   = target.outerHeight() || 1;
+                const relX      = (((x - tOffset.left) / tWidth)  * 100).toFixed(4);
+                const relY      = (((y - tOffset.top)  / tHeight) * 100).toFixed(4);
+                const elemPath  = getSelectorPath(e.target);
+
+                showAddCommentPopup(x, y, relX, relY, elemPath);
             });
 
             // Click on marker
@@ -1560,7 +1586,7 @@ function snn_cc_enqueue_scripts() {
                     return;
                 }
 
-                saveComment(comment, pos.x, pos.y, 0, popup);
+                saveComment(comment, pos.x, pos.y, pos.relX, pos.relY, pos.elemPath, 0, popup);
             });
 
             // Save reply
@@ -1577,7 +1603,10 @@ function snn_cc_enqueue_scripts() {
                     return;
                 }
 
-                saveComment(comment, parentComment.pos_x, parentComment.pos_y, parentId, form);
+                // Replies inherit the parent's position data
+                saveComment(comment, parentComment.pos_x, parentComment.pos_y,
+                    parentComment.pos_x_rel || null, parentComment.pos_y_rel || null,
+                    parentComment.elem_path || null, parentId, form);
             });
 
             // Edit comment
@@ -1706,9 +1735,22 @@ function snn_cc_enqueue_scripts() {
                 }
 
                 const marker = $('<div class="snn-cc-marker' + (hasReplies ? ' has-replies' : '') + (comment.checked_by ? ' is-checked' : '') + '">' + markerContent + '</div>');
+
+                // Resolve position: prefer element-relative coords for screen-size independence
+                let posLeft, posTop;
+                if (comment.elem_path && comment.pos_x_rel && comment.pos_y_rel) {
+                    const resolved = resolvePosition(comment.elem_path, parseFloat(comment.pos_x_rel), parseFloat(comment.pos_y_rel));
+                    posLeft = resolved.x + 'px';
+                    posTop  = resolved.y + 'px';
+                } else {
+                    // Fallback to raw stored coordinates (legacy comments)
+                    posLeft = comment.pos_x;
+                    posTop  = comment.pos_y;
+                }
+
                 marker.css({
-                    left: comment.pos_x,
-                    top: comment.pos_y,
+                    left: posLeft,
+                    top: posTop,
                     background: getUserColor(comment.user_id)
                 });
                 marker.data('comment-id', comment.id);
@@ -1885,7 +1927,7 @@ function snn_cc_enqueue_scripts() {
         }
 
         // Show add comment popup
-        function showAddCommentPopup(x, y) {
+        function showAddCommentPopup(x, y, relX, relY, elemPath) {
             $('.snn-cc-popup').remove();
 
             const popup = $('<div class="snn-cc-popup">' +
@@ -1908,7 +1950,7 @@ function snn_cc_enqueue_scripts() {
             positionPopup(popup, x, y);
             $('body').append(popup);
             popup.find('textarea').focus();
-            popup.data('pos', {x: x, y: y});
+            popup.data('pos', {x: x, y: y, relX: relX || null, relY: relY || null, elemPath: elemPath || null});
         }
 
         // Show comment popup
@@ -2020,7 +2062,7 @@ function snn_cc_enqueue_scripts() {
         }
 
         // Save comment
-        function saveComment(comment, x, y, parentId, element) {
+        function saveComment(comment, x, y, relX, relY, elemPath, parentId, element) {
             const btn = element.find('.snn-cc-popup-btn-primary, .snn-cc-popup-btn-reply');
             const originalText = btn.text();
             btn.html('<span class="snn-cc-loading"></span>').prop('disabled', true);
@@ -2034,6 +2076,9 @@ function snn_cc_enqueue_scripts() {
                 comment: comment,
                 pos_x: x + 'px',
                 pos_y: y + 'px',
+                pos_x_rel: relX || '',
+                pos_y_rel: relY || '',
+                elem_path: elemPath || '',
                 page_url: cleanUrl,
                 parent_id: parentId,
                 nonce: nonce
@@ -2270,6 +2315,65 @@ function snn_cc_enqueue_scripts() {
                     .replace(/\?$/, '');
             }
         }
+
+        // Resolve a stored element-relative percentage back to absolute page coordinates.
+        // This makes markers stick to the correct content position on any screen width.
+        function resolvePosition(elemPath, relX, relY) {
+            try {
+                const el = $(elemPath).first();
+                if (el.length) {
+                    const offset  = el.offset();
+                    const width   = el.outerWidth()  || 1;
+                    const height  = el.outerHeight() || 1;
+                    return {
+                        x: Math.round(offset.left + (relX / 100) * width),
+                        y: Math.round(offset.top  + (relY / 100) * height)
+                    };
+                }
+            } catch(e) { /* fall through to default */ }
+            return { x: 0, y: 0 };
+        }
+
+        // Build a CSS selector path for a DOM element (used for resolvePosition).
+        // Walks up the tree up to 4 levels, using id, classes, and nth-of-type.
+        function getSelectorPath(el) {
+            try {
+                if (el.id) return '#' + CSS.escape(el.id);
+
+                const parts = [];
+                let current = el;
+                let depth   = 0;
+                while (current && current !== document.body && depth < 4) {
+                    let selector = current.tagName.toLowerCase();
+                    if (current.id) {
+                        selector = '#' + CSS.escape(current.id);
+                        parts.unshift(selector);
+                        break; // ID is unique — stop walking up
+                    } else if (current.className) {
+                        const classes = Array.from(current.classList)
+                            .filter(c => !c.startsWith('snn-cc'))
+                            .slice(0, 2)
+                            .map(c => '.' + CSS.escape(c))
+                            .join('');
+                        if (classes) selector += classes;
+                    }
+                    // Add nth-of-type when multiple siblings share the same tag
+                    const siblings = current.parentElement
+                        ? Array.from(current.parentElement.children).filter(s => s.tagName === current.tagName)
+                        : [];
+                    if (siblings.length > 1) {
+                        const idx = siblings.indexOf(current) + 1;
+                        selector += ':nth-of-type(' + idx + ')';
+                    }
+                    parts.unshift(selector);
+                    current = current.parentElement;
+                    depth++;
+                }
+                return parts.join(' > ') || 'body';
+            } catch(e) {
+                return 'body';
+            }
+        }
     });
     </script>
     <?php
@@ -2315,7 +2419,7 @@ function snn_cc_get_comments() {
     $page_url = esc_url_raw($_POST['page_url']);
 
     $comments = $wpdb->get_results($wpdb->prepare(
-        "SELECT c.id, c.parent_id, c.user_id, c.guest_token, c.page_url, c.pos_x, c.pos_y, c.comment, c.status, c.created_at, c.updated_at, c.checked_by, c.checked_at,
+        "SELECT c.id, c.parent_id, c.user_id, c.guest_token, c.page_url, c.pos_x, c.pos_y, c.pos_x_rel, c.pos_y_rel, c.elem_path, c.comment, c.status, c.created_at, c.updated_at, c.checked_by, c.checked_at,
          CASE
             WHEN c.user_id = -1 THEN 'Guest'
             ELSE u.display_name
@@ -2358,6 +2462,9 @@ function snn_cc_save_comment() {
     $comment = sanitize_textarea_field($_POST['comment']);
     $pos_x = sanitize_text_field($_POST['pos_x']);
     $pos_y = sanitize_text_field($_POST['pos_y']);
+    $pos_x_rel = isset($_POST['pos_x_rel']) ? sanitize_text_field($_POST['pos_x_rel']) : null;
+    $pos_y_rel = isset($_POST['pos_y_rel']) ? sanitize_text_field($_POST['pos_y_rel']) : null;
+    $elem_path = isset($_POST['elem_path'])  ? sanitize_text_field($_POST['elem_path'])  : null;
     $page_url = esc_url_raw($_POST['page_url']);
     $parent_id = isset($_POST['parent_id']) ? intval($_POST['parent_id']) : 0;
 
@@ -2389,16 +2496,19 @@ function snn_cc_save_comment() {
     $result = $wpdb->insert(
         $table_name,
         array(
-            'parent_id' => $parent_id,
-            'user_id' => $user_id,
-            'guest_token' => $guest_token,
-            'page_url' => $page_url,
-            'pos_x' => $pos_x,
-            'pos_y' => $pos_y,
-            'comment' => $comment,
-            'status' => 'active'
+            'parent_id'  => $parent_id,
+            'user_id'    => $user_id,
+            'guest_token'=> $guest_token,
+            'page_url'   => $page_url,
+            'pos_x'      => $pos_x,
+            'pos_y'      => $pos_y,
+            'pos_x_rel'  => $pos_x_rel,
+            'pos_y_rel'  => $pos_y_rel,
+            'elem_path'  => $elem_path,
+            'comment'    => $comment,
+            'status'     => 'active'
         ),
-        array('%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s')
+        array('%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s')
     );
 
     if ($result) {
@@ -2624,7 +2734,7 @@ function snn_cc_get_all_comments() {
     $table_name = $wpdb->prefix . 'snn_client_comments';
 
     $comments = $wpdb->get_results(
-        "SELECT c.id, c.parent_id, c.user_id, c.guest_token, c.page_url, c.pos_x, c.pos_y, c.comment, c.status, c.created_at, c.updated_at, c.checked_by, c.checked_at,
+        "SELECT c.id, c.parent_id, c.user_id, c.guest_token, c.page_url, c.pos_x, c.pos_y, c.pos_x_rel, c.pos_y_rel, c.elem_path, c.comment, c.status, c.created_at, c.updated_at, c.checked_by, c.checked_at,
          CASE
             WHEN c.user_id = -1 THEN 'Guest'
             ELSE u.display_name
