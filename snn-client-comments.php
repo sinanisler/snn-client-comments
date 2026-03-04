@@ -1843,6 +1843,7 @@ function snn_cc_enqueue_scripts() {
                         '<div class="snn-cc-allsite-item-meta">' +
                             formatDate(comment.created_at) +
                             (replyCount > 0 ? ' &bull; ' + replyCount + ' ' + (replyCount === 1 ? 'reply' : 'replies') : '') +
+                            (comment.checked_by ? ' <span class="snn-cc-checked-icon" title="Checked by ' + escapeHtml(comment.checked_by_name || 'user') + '">✅</span>' : '') +
                         '</div>' +
                     '</div>');
                     group.append(item);
