@@ -32,6 +32,7 @@ require_once SNN_CC_PLUGIN_DIR . 'github-update.php';
  */
 function snn_cc_create_tables() {
     global $wpdb;
+    $suppress = $wpdb->suppress_errors();
     $charset_collate = $wpdb->get_charset_collate();
 
     // Main comments table
@@ -94,6 +95,7 @@ function snn_cc_create_tables() {
     
     // Save database version
     update_option('snn_cc_db_version', SNN_CC_DB_VERSION);
+    $wpdb->suppress_errors($suppress);
 }
 register_activation_hook(__FILE__, 'snn_cc_create_tables');
 
@@ -115,6 +117,7 @@ add_action('plugins_loaded', 'snn_cc_check_db_upgrade');
  */
 function snn_cc_upgrade_database($from_version) {
     global $wpdb;
+    $suppress = $wpdb->suppress_errors();
     $table_name = $wpdb->prefix . 'snn_client_comments';
     
     // Check if guest_token column exists
@@ -167,6 +170,7 @@ function snn_cc_upgrade_database($from_version) {
     
     // Update DB version
     update_option('snn_cc_db_version', SNN_CC_DB_VERSION);
+    $wpdb->suppress_errors($suppress);
 }
 
 /**
