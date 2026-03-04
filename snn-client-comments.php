@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) {
 
 // Define plugin constants
 define('SNN_CC_VERSION', '1.0.0');
-define('SNN_CC_DB_VERSION', '1.1'); // Database schema version
+define('SNN_CC_DB_VERSION', '1.2'); // Database schema version
 define('SNN_CC_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('SNN_CC_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -46,6 +46,8 @@ function snn_cc_create_tables() {
         pos_y varchar(20) NOT NULL,
         comment text NOT NULL,
         status varchar(20) DEFAULT 'active',
+        checked_by bigint(20) DEFAULT NULL,
+        checked_at datetime DEFAULT NULL,
         created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
         updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         PRIMARY KEY (id),
@@ -126,6 +128,22 @@ function snn_cc_upgrade_database($from_version) {
     if (empty($column_exists)) {
         $wpdb->query("ALTER TABLE $table_name ADD COLUMN guest_token varchar(64) DEFAULT NULL AFTER user_id");
         $wpdb->query("ALTER TABLE $table_name ADD KEY guest_token (guest_token)");
+    }
+
+    // Check if checked_by column exists
+    $checked_col_exists = $wpdb->get_results($wpdb->prepare(
+        "SELECT * FROM INFORMATION_SCHEMA.COLUMNS 
+         WHERE TABLE_SCHEMA = %s 
+         AND TABLE_NAME = %s 
+         AND COLUMN_NAME = 'checked_by'",
+        DB_NAME,
+        $table_name
+    ));
+
+    // Add checked_by / checked_at columns if they don't exist
+    if (empty($checked_col_exists)) {
+        $wpdb->query("ALTER TABLE $table_name ADD COLUMN checked_by bigint(20) DEFAULT NULL");
+        $wpdb->query("ALTER TABLE $table_name ADD COLUMN checked_at datetime DEFAULT NULL");
     }
     
     // Re-run table creation to ensure all tables exist with latest schema
@@ -1225,6 +1243,90 @@ function snn_cc_enqueue_scripts() {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+
+        /* Check Button & Badge */
+        .snn-cc-check-btn {
+            background: none;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            cursor: pointer;
+            padding: 2px 7px;
+            font-size: 12px;
+            color: #888;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
+            line-height: 1.4;
+        }
+        .snn-cc-check-btn:hover {
+            background: #eafaf1;
+            color: #27ae60;
+            border-color: #27ae60;
+        }
+        .snn-cc-check-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            font-size: 13px;
+            cursor: default;
+            position: relative;
+            color: #27ae60;
+            font-weight: 500;
+        }
+        .snn-cc-check-badge .snn-cc-check-tooltip {
+            display: none;
+            position: absolute;
+            bottom: calc(100% + 5px);
+            left: 0;
+            background: #222;
+            color: #fff;
+            padding: 5px 9px;
+            border-radius: 5px;
+            font-size: 11px;
+            white-space: nowrap;
+            z-index: 1000001;
+            pointer-events: none;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+        }
+        .snn-cc-check-badge .snn-cc-check-tooltip::after {
+            content: '';
+            position: absolute;
+            top: 100%;
+            left: 10px;
+            border: 5px solid transparent;
+            border-top-color: #222;
+        }
+        .snn-cc-check-badge:hover .snn-cc-check-tooltip {
+            display: block;
+        }
+
+        /* Checked marker ring */
+        .snn-cc-marker.is-checked {
+            box-shadow: 0 0 0 3px #2ecc71, 0 2px 8px rgba(0,0,0,0.3);
+        }
+        /* Checked indicator dot on marker */
+        .snn-cc-marker.is-checked::before {
+            content: '✓';
+            position: absolute;
+            bottom: -7px;
+            right: -7px;
+            width: 16px;
+            height: 16px;
+            background: #2ecc71;
+            border-radius: 50%;
+            border: 2px solid #fff;
+            font-size: 9px;
+            line-height: 12px;
+            text-align: center;
+            color: #fff;
+            font-weight: bold;
+            z-index: 1;
+        }
+
+        /* Checked badge in sidebar / allsite items */
+        .snn-cc-checked-icon {
+            color: #2ecc71;
+            font-size: 12px;
+            margin-left: 4px;
+        }
     </style>
 
     <script>
@@ -1541,6 +1643,13 @@ function snn_cc_enqueue_scripts() {
             $('body').on('click', '.snn-cc-popup-btn-cancel-reply', function() {
                 $(this).closest('.snn-cc-reply-form').remove();
             });
+
+            // Check / Uncheck comment (logged-in non-guest users only)
+            $('body').on('click', '.snn-cc-check-btn', function(e) {
+                e.stopPropagation();
+                const commentId = $(this).data('comment-id');
+                checkComment(commentId, $(this));
+            });
         }
 
         // Load comments from server
@@ -1596,7 +1705,7 @@ function snn_cc_enqueue_scripts() {
                     markerContent = '💬';
                 }
 
-                const marker = $('<div class="snn-cc-marker' + (hasReplies ? ' has-replies' : '') + '">' + markerContent + '</div>');
+                const marker = $('<div class="snn-cc-marker' + (hasReplies ? ' has-replies' : '') + (comment.checked_by ? ' is-checked' : '') + '">' + markerContent + '</div>');
                 marker.css({
                     left: comment.pos_x,
                     top: comment.pos_y,
@@ -1633,6 +1742,7 @@ function snn_cc_enqueue_scripts() {
                     '<div class="snn-cc-sidebar-item-meta">' +
                         formatDate(comment.created_at) +
                         (replyCount > 0 ? ' • ' + replyCount + ' ' + (replyCount === 1 ? 'reply' : 'replies') : '') +
+                        (comment.checked_by ? ' <span class="snn-cc-checked-icon" title="Checked by ' + escapeHtml(comment.checked_by_name || 'user') + '">✅</span>' : '') +
                     '</div>' +
                 '</div>');
 
@@ -1873,6 +1983,11 @@ function snn_cc_enqueue_scripts() {
                 html += '<button class="snn-cc-popup-comment-action snn-cc-popup-btn-delete" data-comment-id="' + comment.id + '">Delete</button>';
             }
 
+            // Check badge / button — only for logged-in (non-guest) users
+            if (!isGuest) {
+                html += buildCheckBadge(comment);
+            }
+
             html += '</div></div>';
 
             return html;
@@ -2028,6 +2143,72 @@ function snn_cc_enqueue_scripts() {
             return comments.find(c => c.id == id);
         }
 
+        // Build the check badge (if checked) or check button (if not checked)
+        function buildCheckBadge(comment) {
+            if (!comment) return '';
+            if (comment.checked_by) {
+                const who  = escapeHtml(comment.checked_by_name || 'User');
+                const when = formatDate(comment.checked_at);
+                return '<span class="snn-cc-check-badge">' +
+                    '✅' +
+                    '<span class="snn-cc-check-tooltip">Checked by ' + who + ' &middot; ' + when + '</span>' +
+                '</span>';
+            }
+            return '<button class="snn-cc-popup-comment-action snn-cc-check-btn" ' +
+                'data-comment-id="' + comment.id + '">☑ Check</button>';
+        }
+
+        // Toggle checked state
+        function checkComment(commentId, btn) {
+            const originalHtml = btn.html();
+            btn.html('…').prop('disabled', true);
+
+            $.ajax({
+                url: ajaxUrl,
+                type: 'POST',
+                data: {
+                    action: 'snn_cc_check_comment',
+                    comment_id: commentId,
+                    nonce: nonce
+                },
+                success: function(response) {
+                    if (response.success) {
+                        // Update the comment object in our local array
+                        const comment = findCommentById(commentId);
+                        if (comment) {
+                            if (response.data.checked) {
+                                comment.checked_by       = response.data.checked_by;
+                                comment.checked_by_name  = response.data.checked_by_name;
+                                comment.checked_at       = response.data.checked_at;
+                            } else {
+                                comment.checked_by       = null;
+                                comment.checked_by_name  = null;
+                                comment.checked_at       = null;
+                            }
+                        }
+                        // Replace button/badge in the open popup
+                        btn.replaceWith(buildCheckBadge(comment));
+                        // Update marker ring on page
+                        const marker = $('.snn-cc-marker[data-comment-id="' + commentId + '"]');
+                        if (response.data.checked) {
+                            marker.addClass('is-checked');
+                        } else {
+                            marker.removeClass('is-checked');
+                        }
+                        // Refresh sidebar
+                        updateSidebar();
+                    } else {
+                        alert('Error: ' + (response.data || 'Could not update check state'));
+                        btn.html(originalHtml).prop('disabled', false);
+                    }
+                },
+                error: function() {
+                    alert('Error: Could not reach server');
+                    btn.html(originalHtml).prop('disabled', false);
+                }
+            });
+        }
+
         function getInitials(name) {
             if (!name) return '?';
             const parts = name.trim().split(' ');
@@ -2133,13 +2314,15 @@ function snn_cc_get_comments() {
     $page_url = esc_url_raw($_POST['page_url']);
 
     $comments = $wpdb->get_results($wpdb->prepare(
-        "SELECT c.id, c.parent_id, c.user_id, c.guest_token, c.page_url, c.pos_x, c.pos_y, c.comment, c.status, c.created_at, c.updated_at,
+        "SELECT c.id, c.parent_id, c.user_id, c.guest_token, c.page_url, c.pos_x, c.pos_y, c.comment, c.status, c.created_at, c.updated_at, c.checked_by, c.checked_at,
          CASE
             WHEN c.user_id = -1 THEN 'Guest'
             ELSE u.display_name
-         END as user_name
+         END as user_name,
+         cu.display_name as checked_by_name
          FROM $table_name c
          LEFT JOIN {$wpdb->users} u ON c.user_id = u.ID
+         LEFT JOIN {$wpdb->users} cu ON c.checked_by = cu.ID
          WHERE c.page_url = %s AND c.status = 'active'
          ORDER BY c.parent_id ASC, c.created_at ASC",
         $page_url
@@ -2365,6 +2548,62 @@ add_action('wp_ajax_snn_cc_delete_comment', 'snn_cc_delete_comment');
 add_action('wp_ajax_nopriv_snn_cc_delete_comment', 'snn_cc_delete_comment');
 
 /**
+ * AJAX: Toggle "Checked" state on a comment (logged-in users only)
+ */
+function snn_cc_check_comment() {
+    check_ajax_referer('snn_cc_nonce', 'nonce');
+
+    if (!is_user_logged_in()) {
+        wp_send_json_error('Must be logged in to check comments');
+        return;
+    }
+
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'snn_client_comments';
+    $comment_id = intval($_POST['comment_id']);
+    $user_id    = get_current_user_id();
+
+    $existing = $wpdb->get_row($wpdb->prepare(
+        "SELECT * FROM $table_name WHERE id = %d AND status = 'active'",
+        $comment_id
+    ));
+
+    if (!$existing) {
+        wp_send_json_error('Comment not found');
+        return;
+    }
+
+    // Toggle: if already checked by the same user → uncheck; otherwise check
+    if ($existing->checked_by == $user_id) {
+        $wpdb->update(
+            $table_name,
+            array('checked_by' => null, 'checked_at' => null),
+            array('id' => $comment_id),
+            array('%s', '%s'),
+            array('%d')
+        );
+        wp_send_json_success(array('checked' => false));
+    } else {
+        $current_user = wp_get_current_user();
+        $now          = current_time('mysql');
+        $wpdb->update(
+            $table_name,
+            array('checked_by' => $user_id, 'checked_at' => $now),
+            array('id' => $comment_id),
+            array('%d', '%s'),
+            array('%d')
+        );
+        wp_send_json_success(array(
+            'checked'          => true,
+            'checked_by'       => $user_id,
+            'checked_by_name'  => $current_user->display_name,
+            'checked_at'       => $now,
+        ));
+    }
+}
+add_action('wp_ajax_snn_cc_check_comment', 'snn_cc_check_comment');
+
+/**
  * AJAX: Get all comments sitewide (no page filter)
  */
 function snn_cc_get_all_comments() {
@@ -2384,13 +2623,15 @@ function snn_cc_get_all_comments() {
     $table_name = $wpdb->prefix . 'snn_client_comments';
 
     $comments = $wpdb->get_results(
-        "SELECT c.id, c.parent_id, c.user_id, c.guest_token, c.page_url, c.pos_x, c.pos_y, c.comment, c.status, c.created_at, c.updated_at,
+        "SELECT c.id, c.parent_id, c.user_id, c.guest_token, c.page_url, c.pos_x, c.pos_y, c.comment, c.status, c.created_at, c.updated_at, c.checked_by, c.checked_at,
          CASE
             WHEN c.user_id = -1 THEN 'Guest'
             ELSE u.display_name
-         END as user_name
+         END as user_name,
+         cu.display_name as checked_by_name
          FROM $table_name c
          LEFT JOIN {$wpdb->users} u ON c.user_id = u.ID
+         LEFT JOIN {$wpdb->users} cu ON c.checked_by = cu.ID
          WHERE c.status = 'active'
          ORDER BY c.page_url ASC, c.parent_id ASC, c.created_at DESC",
         ARRAY_A
