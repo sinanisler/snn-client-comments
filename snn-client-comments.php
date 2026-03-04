@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) {
 
 // Define plugin constants
 define('SNN_CC_VERSION', '1.0.0');
-define('SNN_CC_DB_VERSION', '1.3'); // Database schema version
+define('SNN_CC_DB_VERSION', '1.4'); // Database schema version
 define('SNN_CC_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('SNN_CC_PLUGIN_URL', plugin_dir_url(__FILE__));
 
