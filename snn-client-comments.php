@@ -1,4 +1,4 @@
-<?php     
+<?php      
 /**
  * Plugin Name: SNN Client Comments 
  * Plugin URI: https://github.com/sinanisler/snn-client-comments
